@@ -15,6 +15,7 @@ import java.nio.channels.Selector
 import java.nio.channels.SocketChannel
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.Volatile
 
 /**
@@ -57,21 +58,31 @@ class LocalVpnConnection(
         val destAddress: InetAddress,
         val destPort: Int,
         val channel: DatagramChannel,
-        var lastActive: Long = System.currentTimeMillis()
+        @Volatile var lastActive: Long = System.currentTimeMillis()
     )
 
-    private data class TcpSession(
+    private class TcpSession(
         val srcAddress: InetAddress,
         val srcPort: Int,
         val destAddress: InetAddress,
-        val destPort: Int,
-        var channel: SocketChannel? = null,
-        var state: TcpState = TcpState.LISTEN,
-        var mySequenceNum: Long = 0,
-        var theirSequenceNum: Long = 0,
-        var lastActive: Long = System.currentTimeMillis(),
+        val destPort: Int
+    ) {
+        var channel: SocketChannel? = null
+        @Volatile var state: TcpState = TcpState.LISTEN
+        @Volatile var mySequenceNum: Long = 0
+        @Volatile var theirSequenceNum: Long = 0
+        @Volatile var lastActive: Long = System.currentTimeMillis()
         val outBuffer: ConcurrentLinkedQueue<ByteBuffer> = ConcurrentLinkedQueue()
-    )
+        val outOfOrderBuffer: java.util.TreeMap<Long, ByteArray> = java.util.TreeMap { a, b ->
+            val diff = (a.toInt() - b.toInt())
+            if (diff == 0) 0 else if (diff < 0) -1 else 1
+        }
+    }
+
+    private fun isBefore(a: Long, b: Long): Boolean = (a.toInt() - b.toInt()) < 0
+    private fun isAfter(a: Long, b: Long): Boolean = (a.toInt() - b.toInt()) > 0
+
+    private val nextIpId = AtomicInteger(0)
 
     enum class TcpState {
         LISTEN, SYN_RECEIVED, ESTABLISHED, CLOSE_WAIT, LAST_ACK, CLOSED
@@ -237,8 +248,9 @@ class LocalVpnConnection(
                 while (session.outBuffer.isNotEmpty()) {
                     val buffer = session.outBuffer.poll()
                     if (buffer != null) {
-                        channel.write(buffer)
-                        Log.v(TAG, "Flushed buffered TCP data: ${buffer.remaining()} bytes")
+                        val written = channel.write(buffer)
+                        if (written > 0) stats.recordSent(written)
+                        Log.v(TAG, "Flushed buffered TCP data: $written bytes")
                     }
                 }
             }
@@ -251,18 +263,34 @@ class LocalVpnConnection(
     }
 
     private fun forwardToNetwork(packet: ByteBuffer) {
-        if (packet.limit() < 20) return
+        if (packet.limit() < 20) {
+            Log.w(TAG, "Discarding too short packet: ${packet.limit()} bytes")
+            return
+        }
 
         val versionAndIHL = packet.get(0).toInt() and 0xFF
         val version = versionAndIHL shr 4
-        if (version != 4) return
+        if (version != 4) {
+            Log.w(TAG, "Discarding non-IPv4 packet: version=$version")
+            return
+        }
+
+        // Verify source IP is our VPN address
+        val srcIpBytes = ByteArray(4)
+        packet.position(12)
+        packet.get(srcIpBytes)
+        val srcAddress = InetAddress.getByAddress(srcIpBytes)
+        if (srcAddress.hostAddress != "10.0.0.2") {
+            Log.v(TAG, "Discarding packet with unexpected source IP: ${srcAddress.hostAddress}")
+            return
+        }
 
         val protocol = packet.get(9).toInt() and 0xFF
         when (protocol) {
             17 -> forwardUdpPacket(packet)
             6 -> forwardTcpPacket(packet)
             1 -> forwardIcmpPacket(packet)
-            else -> Log.v(TAG, "Unsupported protocol: $protocol")
+            else -> Log.d(TAG, "Unsupported protocol: $protocol (discarding)")
         }
     }
 
@@ -284,6 +312,8 @@ class LocalVpnConnection(
             Log.d(TAG, "ICMP Echo Request to $destAddress")
             // とりあえずローカルでEcho Replyを返す
             sendIcmpEchoReply(packet)
+        } else {
+            Log.d(TAG, "Unsupported ICMP type: $type (discarding)")
         }
     }
 
@@ -340,7 +370,10 @@ class LocalVpnConnection(
         // Payload
         val udpDataStart = headerLength + 8
         val payloadLength = packet.limit() - udpDataStart
-        if (payloadLength <= 0) return
+        if (payloadLength <= 0) {
+            Log.v(TAG, "Empty UDP payload from $srcAddress:$srcPort to $destAddress:$destPort")
+            return
+        }
 
         val payload = ByteArray(payloadLength)
         packet.position(udpDataStart)
@@ -353,6 +386,7 @@ class LocalVpnConnection(
             Log.d(TAG, "Creating new UDP session for $sessionKey")
             val channel = DatagramChannel.open()
             if (!vpnService.protect(channel.socket())) {
+                Log.e(TAG, "Failed to protect UDP socket for $sessionKey")
                 channel.close()
                 return
             }
@@ -418,73 +452,153 @@ class LocalVpnConnection(
                     return
                 }
 
-                session = TcpSession(srcAddress, srcPort, destAddress, destPort)
-                session.theirSequenceNum = seqNum
-                session.mySequenceNum = System.currentTimeMillis() and 0xFFFFFFFFL
-                session.state = TcpState.SYN_RECEIVED
-                tcpSessions[sessionKey] = session
+                val newSession = TcpSession(srcAddress, srcPort, destAddress, destPort)
+                newSession.theirSequenceNum = (seqNum + 1) and 0xFFFFFFFFL
+                newSession.mySequenceNum = java.util.Random().nextInt().toLong() and 0xFFFFFFFFL
+                newSession.state = TcpState.SYN_RECEIVED
+                tcpSessions[sessionKey] = newSession
                 
                 try {
                     val channel = SocketChannel.open()
                     if (!vpnService.protect(channel.socket())) {
+                        Log.e(TAG, "Failed to protect TCP socket for $sessionKey")
                         channel.close()
                         tcpSessions.remove(sessionKey)
                         return
                     }
                     channel.configureBlocking(false)
                     channel.connect(InetSocketAddress(destAddress, destPort))
-                    session.channel = channel
-                    pendingRegistrations.add(session)
+                    newSession.channel = channel
+                    pendingRegistrations.add(newSession)
                     selector?.wakeup()
                 } catch (e: Exception) {
+                    Log.e(TAG, "Failed to open TCP channel for $sessionKey", e)
                     tcpSessions.remove(sessionKey)
                     return
                 }
 
-                sendTcpControlPacket(session, 0x12, session.mySequenceNum, session.theirSequenceNum + 1, null)
-                session.mySequenceNum++
+                // Send SYN+ACK: our SEQ is mySequenceNum, we ACK their initial SEQ + 1
+                sendTcpControlPacket(newSession, 0x12, newSession.mySequenceNum, newSession.theirSequenceNum, null)
+                newSession.mySequenceNum = (newSession.mySequenceNum + 1) and 0xFFFFFFFFL
+            } else {
+                Log.v(TAG, "Discarding non-SYN TCP packet for new session: $sessionKey (Sending RST)")
+                sendTcpReset(srcAddress, srcPort, destAddress, destPort, ackNum, (seqNum + 1) and 0xFFFFFFFFL)
             }
             return
         }
 
-        session.lastActive = System.currentTimeMillis()
+        synchronized(session) {
+            session.lastActive = System.currentTimeMillis()
 
-        if (isRst) {
-            closeTcpSession(session, sessionKey)
-            return
-        }
+            if (isRst) {
+                Log.d(TAG, "TCP RST received for $sessionKey")
+                closeTcpSession(session, sessionKey)
+                return
+            }
 
-        if (session.state == TcpState.SYN_RECEIVED && isAck) {
-            session.state = TcpState.ESTABLISHED
-            return
-        }
+            if (isSyn) {
+                // Retransmitted SYN, resend SYN+ACK
+                Log.v(TAG, "TCP SYN retransmitted for $sessionKey")
+                sendTcpControlPacket(session, 0x12, (session.mySequenceNum - 1) and 0xFFFFFFFFL, session.theirSequenceNum, null)
+                return
+            }
 
-        if (session.state == TcpState.ESTABLISHED || session.state == TcpState.SYN_RECEIVED) {
-            val payloadStart = ipHeaderLength + tcpHeaderLength
-            val payloadSize = packet.limit() - payloadStart
-            if (payloadSize > 0) {
-                val payload = ByteArray(payloadSize)
-                packet.position(payloadStart)
-                packet.get(payload)
+            if (session.state == TcpState.SYN_RECEIVED && isAck) {
+                session.state = TcpState.ESTABLISHED
+                Log.v(TAG, "TCP state established for $sessionKey")
+            }
+
+            if (session.state == TcpState.ESTABLISHED || session.state == TcpState.SYN_RECEIVED) {
+                val payloadStart = ipHeaderLength + tcpHeaderLength
+                val payloadSize = packet.limit() - payloadStart
                 
-                try {
-                    val channel = session.channel
-                    if (channel != null && channel.isConnected) {
-                        channel.write(ByteBuffer.wrap(payload))
-                    } else {
-                        session.outBuffer.add(ByteBuffer.wrap(payload))
+                // Validate sequence number for established sessions
+                if (payloadSize > 0) {
+                    if (isBefore(seqNum, session.theirSequenceNum)) {
+                        Log.v(TAG, "TCP duplicate/old packet for $sessionKey (seqNum $seqNum < ${session.theirSequenceNum})")
+                        // Resend ACK for their current position
+                        sendTcpControlPacket(session, 0x10, session.mySequenceNum, session.theirSequenceNum, null)
+                        return
                     }
-                    session.theirSequenceNum += payloadSize
-                    sendTcpControlPacket(session, 0x10, session.mySequenceNum, session.theirSequenceNum, null)
-                } catch (e: IOException) {
-                    closeTcpSession(session, sessionKey)
+                    
+                    if (isAfter(seqNum, session.theirSequenceNum)) {
+                        val diff = (seqNum.toInt() - session.theirSequenceNum.toInt())
+                        if (diff > 65535) {
+                            Log.w(TAG, "TCP packet too far ahead for $sessionKey (seqNum $seqNum, expected ${session.theirSequenceNum}) - discarding")
+                            return
+                        }
+                        
+                        Log.v(TAG, "TCP out-of-order packet for $sessionKey (seqNum $seqNum > ${session.theirSequenceNum}) - buffering")
+                        val payload = ByteArray(payloadSize)
+                        packet.position(payloadStart)
+                        packet.get(payload)
+                        session.outOfOrderBuffer[seqNum] = payload
+                        
+                        // Send ACK for current position to trigger retransmission of missing data
+                        sendTcpControlPacket(session, 0x10, session.mySequenceNum, session.theirSequenceNum, null)
+                        return
+                    }
+
+                    val payload = ByteArray(payloadSize)
+                    packet.position(payloadStart)
+                    packet.get(payload)
+                    
+                    try {
+                        val channel = session.channel
+                        if (channel != null && channel.isConnected) {
+                            val written = channel.write(ByteBuffer.wrap(payload))
+                            if (written > 0) stats.recordSent(written)
+                            session.theirSequenceNum = (seqNum + payloadSize) and 0xFFFFFFFFL
+                            
+                            // Process reassembled packets from buffer
+                            while (session.outOfOrderBuffer.isNotEmpty()) {
+                                val nextSeq = session.outOfOrderBuffer.firstKey()
+                                if (!isAfter(nextSeq, session.theirSequenceNum)) {
+                                    val bufferedPayload = session.outOfOrderBuffer.remove(nextSeq)
+                                    val nextSeqEnd = (nextSeq + (bufferedPayload?.size ?: 0)) and 0xFFFFFFFFL
+                                    if (isAfter(nextSeqEnd, session.theirSequenceNum)) {
+                                        val offset = (session.theirSequenceNum.toInt() - nextSeq.toInt())
+                                        val actualPayload = if (offset > 0) bufferedPayload!!.sliceArray(offset until bufferedPayload.size) else bufferedPayload!!
+                                        val reassembledWritten = channel.write(ByteBuffer.wrap(actualPayload))
+                                        if (reassembledWritten > 0) stats.recordSent(reassembledWritten)
+                                        session.theirSequenceNum = (session.theirSequenceNum + actualPayload.size) and 0xFFFFFFFFL
+                                        Log.v(TAG, "Reassembled TCP packet for $sessionKey (seqNum $nextSeq)")
+                                    }
+                                } else {
+                                    break
+                                }
+                            }
+                            
+                            // Send ACK
+                            sendTcpControlPacket(session, 0x10, session.mySequenceNum, session.theirSequenceNum, null)
+                        } else {
+                            // Buffer data while connecting
+                            session.outBuffer.add(ByteBuffer.wrap(payload))
+                            session.theirSequenceNum = (seqNum + payloadSize) and 0xFFFFFFFFL
+                            // Acknowledge receipt even if not forwarded yet
+                            sendTcpControlPacket(session, 0x10, session.mySequenceNum, session.theirSequenceNum, null)
+                        }
+                    } catch (e: IOException) {
+                        Log.e(TAG, "TCP write failed for $sessionKey", e)
+                        closeTcpSession(session, sessionKey)
+                        return
+                    }
+                } else if (isAck) {
+                    // Update their sequence number even for pure ACKs if it's newer
+                    if (isAfter(seqNum, session.theirSequenceNum)) {
+                        session.theirSequenceNum = seqNum
+                    }
                 }
             }
-        }
-        
-        if (isFin) {
-            sendTcpControlPacket(session, 0x11, session.mySequenceNum, seqNum + 1, null)
-            closeTcpSession(session, sessionKey)
+            
+            if (isFin) {
+                Log.d(TAG, "TCP FIN received for $sessionKey")
+                val finSeq = (seqNum + (if (ipHeaderLength + tcpHeaderLength < packet.limit()) packet.limit() - (ipHeaderLength + tcpHeaderLength) else 0)) and 0xFFFFFFFFL
+                session.theirSequenceNum = (finSeq + 1) and 0xFFFFFFFFL
+                sendTcpControlPacket(session, 0x11, session.mySequenceNum, session.theirSequenceNum, null)
+                session.mySequenceNum = (session.mySequenceNum + 1) and 0xFFFFFFFFL
+                closeTcpSession(session, sessionKey)
+            }
         }
     }
 
@@ -497,23 +611,62 @@ class LocalVpnConnection(
                 val totalDataSize = buffer.remaining()
                 stats.recordReceived(totalDataSize)
                 
-                while (buffer.hasRemaining()) {
-                    val chunkSize = minOf(buffer.remaining(), MAX_SEGMENT_SIZE)
-                    val chunk = buffer.slice()
-                    chunk.limit(chunkSize)
-                    
-                    sendTcpControlPacket(session, 0x10, session.mySequenceNum, session.theirSequenceNum, chunk)
-                    
-                    session.mySequenceNum += chunkSize
-                    buffer.position(buffer.position() + chunkSize)
+                synchronized(session) {
+                    while (buffer.hasRemaining()) {
+                        val chunkSize = minOf(buffer.remaining(), MAX_SEGMENT_SIZE)
+                        val chunk = buffer.slice()
+                        chunk.limit(chunkSize)
+                        
+                        sendTcpControlPacket(session, 0x10, session.mySequenceNum, session.theirSequenceNum, chunk)
+                        
+                        session.mySequenceNum = (session.mySequenceNum + chunkSize) and 0xFFFFFFFFL
+                        buffer.position(buffer.position() + chunkSize)
+                    }
                 }
             } else if (read < 0) {
-                sendTcpControlPacket(session, 0x11, session.mySequenceNum, session.theirSequenceNum, null)
-                closeTcpSession(session, "TCP:${session.srcAddress}:${session.srcPort} -> ${session.destAddress}:${session.destPort}")
+                Log.d(TAG, "TCP remote closed connection for TCP:${session.srcAddress}:${session.srcPort} -> ${session.destAddress}:${session.destPort}")
+                synchronized(session) {
+                    sendTcpControlPacket(session, 0x11, session.mySequenceNum, session.theirSequenceNum, null)
+                    session.mySequenceNum = (session.mySequenceNum + 1) and 0xFFFFFFFFL
+                    closeTcpSession(session, "TCP:${session.srcAddress}:${session.srcPort} -> ${session.destAddress}:${session.destPort}")
+                }
             }
         } catch (e: IOException) {
             closeTcpSession(session, "TCP:${session.srcAddress}:${session.srcPort} -> ${session.destAddress}:${session.destPort}")
         }
+    }
+
+    private fun sendTcpReset(srcAddr: InetAddress, srcPort: Int, destAddr: InetAddress, destPort: Int, seq: Long, ack: Long) {
+        val totalSize = 40
+        val packet = ByteBuffer.allocate(totalSize)
+
+        // IP Header
+        packet.put(0x45.toByte())
+        packet.put(0x00.toByte())
+        packet.putShort(totalSize.toShort())
+        packet.putShort(nextIpId.getAndIncrement().toShort())
+        packet.putShort(0.toShort())
+        packet.put(64.toByte())
+        packet.put(6.toByte())
+        packet.putShort(0.toShort())
+        packet.put(destAddr.address)
+        packet.put(srcAddr.address)
+        packet.putShort(10, calculateChecksum(packet.array(), 0, 20))
+
+        // TCP Header (RST + ACK)
+        packet.position(20)
+        packet.putShort(destPort.toShort())
+        packet.putShort(srcPort.toShort())
+        packet.putInt(seq.toInt())
+        packet.putInt(ack.toInt())
+        packet.putShort(((5 shl 12) or 0x14).toShort()) // RST=1, ACK=1
+        packet.putShort(16384.toShort())
+        packet.putShort(0.toShort())
+        packet.putShort(0.toShort())
+
+        packet.putShort(36, calculateTcpChecksum(packet.array(), destAddr, srcAddr, 20))
+
+        inboundDelayManager.addPacket(packet.array(), totalSize)
     }
 
     private fun sendTcpControlPacket(session: TcpSession, flags: Int, seq: Long, ack: Long, payload: ByteBuffer?) {
@@ -525,7 +678,7 @@ class LocalVpnConnection(
         packet.put(0x45.toByte())
         packet.put(0x00.toByte())
         packet.putShort(totalSize.toShort())
-        packet.putShort(0.toShort())
+        packet.putShort(nextIpId.getAndIncrement().toShort())
         packet.putShort(0.toShort())
         packet.put(64.toByte())
         packet.put(6.toByte())
@@ -566,6 +719,18 @@ class LocalVpnConnection(
         return calculateChecksum(pseudoHeader.array(), 0, 12 + tcpLength)
     }
 
+    private fun calculateUdpChecksum(packet: ByteArray, srcAddr: InetAddress, destAddr: InetAddress, udpLength: Int): Short {
+        val pseudoHeader = ByteBuffer.allocate(12 + udpLength)
+        pseudoHeader.put(srcAddr.address)
+        pseudoHeader.put(destAddr.address)
+        pseudoHeader.put(0.toByte())
+        pseudoHeader.put(17.toByte())
+        pseudoHeader.putShort(udpLength.toShort())
+        System.arraycopy(packet, 20, pseudoHeader.array(), 12, udpLength)
+        val checksum = calculateChecksum(pseudoHeader.array(), 0, 12 + udpLength)
+        return if (checksum == 0.toShort()) 0xFFFF.toShort() else checksum
+    }
+
     private fun calculateChecksum(data: ByteArray, offset: Int, length: Int): Short {
         var sum = 0
         var i = 0
@@ -592,7 +757,7 @@ class LocalVpnConnection(
         packet.put(0x45.toByte())
         packet.put(0x00.toByte())
         packet.putShort(totalSize.toShort())
-        packet.putShort(0.toShort())
+        packet.putShort(nextIpId.getAndIncrement().toShort())
         packet.putShort(0.toShort())
         packet.put(64.toByte())
         packet.put(17.toByte())
@@ -605,14 +770,18 @@ class LocalVpnConnection(
         packet.putShort(session.destPort.toShort())
         packet.putShort(session.srcPort.toShort())
         packet.putShort((8 + payloadSize).toShort())
-        packet.putShort(0.toShort()) // UDP Checksum (Optional)
+        packet.putShort(0.toShort())
         packet.put(payload)
+
+        packet.putShort(26, calculateUdpChecksum(packet.array(), session.destAddress, session.srcAddress, 8 + payloadSize))
 
         inboundDelayManager.addPacket(packet.array(), totalSize)
     }
 
     private fun closeTcpSession(session: TcpSession, key: String) {
         try { session.channel?.close() } catch (e: Exception) {}
+        session.outBuffer.clear()
+        session.outOfOrderBuffer.clear()
         tcpSessions.remove(key)
     }
 
@@ -653,6 +822,6 @@ class LocalVpnConnection(
         private const val TAG = "LocalVpnConnection"
         private const val MAX_PACKET_SIZE = 16384
         private const val MAX_SEGMENT_SIZE = 1400
-        private const val SESSION_TIMEOUT_MS: Long = 60000
+        private const val SESSION_TIMEOUT_MS: Long = 300000
     }
 }

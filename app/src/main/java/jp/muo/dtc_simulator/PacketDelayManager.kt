@@ -11,14 +11,18 @@ import java.util.concurrent.PriorityBlockingQueue
 class PacketDelayManager {
     private data class DelayedPacket(
         val data: ByteArray,
-        val arrivalTime: Long
+        val arrivalTime: Long,
+        val sequenceNumber: Long
     ) : Comparable<DelayedPacket> {
         override fun compareTo(other: DelayedPacket): Int {
-            return arrivalTime.compareTo(other.arrivalTime)
+            val timeCompare = arrivalTime.compareTo(other.arrivalTime)
+            if (timeCompare != 0) return timeCompare
+            return sequenceNumber.compareTo(other.sequenceNumber)
         }
     }
 
     private val queue = PriorityBlockingQueue<DelayedPacket>()
+    private var nextSequenceNumber = 0L
     @Volatile
     private var latencyMs: Int = 0
 
@@ -32,10 +36,11 @@ class PacketDelayManager {
     /**
      * Add a packet to the delay queue
      */
+    @Synchronized
     fun addPacket(data: ByteArray, length: Int) {
         val now = System.currentTimeMillis()
         val packetData = data.copyOfRange(0, length)
-        queue.offer(DelayedPacket(packetData, now))
+        queue.offer(DelayedPacket(packetData, now, nextSequenceNumber++))
     }
 
     /**
