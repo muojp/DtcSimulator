@@ -1,0 +1,14 @@
+*.iml
+.gradle
+/local.properties
+.idea/
+.DS_Store
+/build
+/captures
+.kotlin/
+.externalNativeBuild
+.cxx
+local.properties
+
+# Environment configuration
+.env

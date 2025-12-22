@@ -1,0 +1,512 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fitsSystemWindows="true"
+        android:background="?attr/colorPrimary"
+        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="@android:color/transparent"
+            app:title="@string/app_name"
+            app:titleTextColor="@android:color/white" />
+
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- VPN Control Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="4dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/vpn_control_title"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6"
+                        android:textColor="?attr/colorPrimary"
+                        android:layout_marginBottom="8dp" />
+
+                    <TextView
+                        android:id="@+id/tv_vpn_description"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/vpn_control_description"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
+                        android:textColor="?android:attr/textColorSecondary"
+                        android:layout_marginBottom="16dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/vpn_mode_title"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle2"
+                        android:textColor="?attr/colorPrimary"
+                        android:layout_marginBottom="8dp" />
+
+                    <RadioGroup
+                        android:id="@+id/rg_vpn_mode"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp">
+
+                        <com.google.android.material.radiobutton.MaterialRadioButton
+                            android:id="@+id/rb_local_mode"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/vpn_mode_local"
+                            android:checked="true"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="4dp" />
+
+                        <com.google.android.material.radiobutton.MaterialRadioButton
+                            android:id="@+id/rb_server_mode"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/vpn_mode_server"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="4dp" />
+
+                    </RadioGroup>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="?android:attr/listDivider"
+                        android:layout_marginBottom="16dp" />
+
+                    <!-- Latency Simulation Controls -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/latency_simulation_title"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle2"
+                        android:textColor="?attr/colorPrimary"
+                        android:layout_marginBottom="8dp" />
+
+                    <!-- Outbound Latency -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/outbound_latency_label"
+                            android:textAppearance="@style/TextAppearance.MaterialComponents.Body2" />
+                        <TextView
+                            android:id="@+id/tv_outbound_latency"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0 ms"
+                            android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/slider_outbound_latency"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:valueFrom="0"
+                        android:valueTo="100"
+                        android:stepSize="1"
+                        android:value="0"
+                        app:labelBehavior="gone" />
+
+                    <!-- Inbound Latency -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="8dp">
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/inbound_latency_label"
+                            android:textAppearance="@style/TextAppearance.MaterialComponents.Body2" />
+                        <TextView
+                            android:id="@+id/tv_inbound_latency"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0 ms"
+                            android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/slider_inbound_latency"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:valueFrom="0"
+                        android:valueTo="100"
+                        android:stepSize="1"
+                        android:value="0"
+                        app:labelBehavior="gone" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="?android:attr/listDivider"
+                        android:layout_marginTop="8dp"
+                        android:layout_marginBottom="16dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_start_vpn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/start_vpn"
+                        app:icon="@android:drawable/ic_media_play"
+                        app:iconGravity="start"
+                        android:paddingTop="12dp"
+                        android:paddingBottom="12dp" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- VPN Statistics Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/card_statistics"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="4dp"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="VPN Statistics"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6"
+                        android:textColor="?attr/colorPrimary"
+                        android:layout_marginBottom="12dp" />
+
+                    <!-- Traffic Stats -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="8dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:paddingEnd="8dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Sent"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
+                                android:textColor="?android:attr/textColorSecondary" />
+
+                            <TextView
+                                android:id="@+id/tv_stats_sent"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="0 B"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Body1"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tv_stats_sent_packets"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="0 packets"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
+                                android:textColor="?android:attr/textColorSecondary" />
+
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:paddingStart="8dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Received"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
+                                android:textColor="?android:attr/textColorSecondary" />
+
+                            <TextView
+                                android:id="@+id/tv_stats_received"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="0 B"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Body1"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tv_stats_received_packets"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="0 packets"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
+                                android:textColor="?android:attr/textColorSecondary" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="?android:attr/listDivider"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="12dp" />
+
+                    <!-- Buffer Stats -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Buffer Status"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle2"
+                        android:layout_marginBottom="8dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:paddingEnd="8dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Outgoing Buffer"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
+                                android:textColor="?android:attr/textColorSecondary" />
+
+                            <TextView
+                                android:id="@+id/tv_stats_outgoing_buffer"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="0 B"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Body2" />
+
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:paddingStart="8dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Incoming Buffer"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
+                                android:textColor="?android:attr/textColorSecondary" />
+
+                            <TextView
+                                android:id="@+id/tv_stats_incoming_buffer"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="0 B"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Body2" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- UDP Echo Test Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="4dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/udp_echo_test_title"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6"
+                        android:textColor="?attr/colorPrimary"
+                        android:layout_marginBottom="8dp" />
+
+                    <TextView
+                        android:id="@+id/tv_udp_description"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/udp_echo_test_description"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
+                        android:textColor="?android:attr/textColorSecondary"
+                        android:layout_marginBottom="16dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_test_udp"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/test_udp_echo"
+                        app:icon="@android:drawable/ic_menu_send"
+                        app:iconGravity="start"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:paddingTop="12dp"
+                        android:paddingBottom="12dp" />
+
+                    <TextView
+                        android:id="@+id/tv_udp_result"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:padding="12dp"
+                        android:background="?attr/colorSurface"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
+                        android:fontFamily="monospace"
+                        android:visibility="gone"
+                        android:text="" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Allowed Apps List Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="4dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="12dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/allowed_apps_title"
+                            android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6"
+                            android:textColor="?attr/colorPrimary" />
+
+                        <TextView
+                            android:id="@+id/tv_allowed_count"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/allowed_apps_count"
+                            android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
+                            android:background="?attr/colorPrimaryVariant"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="4dp"
+                            android:textColor="@android:color/white"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="?android:attr/listDivider"
+                        android:layout_marginBottom="12dp" />
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/rv_allowed_apps"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="200dp"
+                        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                        tools:listitem="@android:layout/simple_list_item_1"
+                        tools:itemCount="3" />
+
+                    <TextView
+                        android:id="@+id/tv_empty_state"
+                        android:layout_width="match_parent"
+                        android:layout_height="200dp"
+                        android:text="@string/no_allowed_apps"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Body1"
+                        android:textColor="?android:attr/textColorSecondary"
+                        android:gravity="center"
+                        android:visibility="gone"
+                        tools:visibility="visible" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Floating Action Button for Quick VPN Toggle (Optional) -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_vpn_toggle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        app:srcCompat="@android:drawable/ic_menu_preferences"
+        android:contentDescription="@string/vpn_quick_toggle"
+        android:visibility="gone" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

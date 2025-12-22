@@ -1,0 +1,56 @@
+<resources>
+    <string name="app_name">DTC Network Simulator</string>
+
+    <!-- VPN Control -->
+    <string name="vpn_control_title">VPN Control</string>
+    <string name="vpn_control_description">Start the VPN service to filter network traffic for allowed applications only.</string>
+    <string name="vpn_mode_title">VPN Mode</string>
+    <string name="vpn_mode_server">Server Mode (External VPN Server)</string>
+    <string name="vpn_mode_local">Local Mode (Local Packet Forwarding)</string>
+    <string name="start_vpn">Start VPN Service</string>
+    <string name="stop_vpn">Stop VPN Service</string>
+    <string name="vpn_running">VPN Running</string>
+    <string name="vpn_stopped">VPN Stopped</string>
+    <string name="vpn_quick_toggle">Quick VPN Toggle</string>
+
+    <!-- Settings -->
+    <string name="action_settings">Settings</string>
+    <string name="settings_title">Settings</string>
+    <string name="server_config_title">Server Configuration</string>
+    <string name="server_config_description">Configure the external VPN server settings for Server Mode.</string>
+    <string name="server_address_hint">Server Address</string>
+    <string name="server_address_helper">Format: IP_ADDRESS:PORT (e.g., 192.168.0.157:8000)</string>
+    <string name="server_secret_hint">Shared Secret</string>
+    <string name="server_secret_helper">Authentication key for the VPN server</string>
+    <string name="save_settings">Save Settings</string>
+    <string name="settings_saved">Settings saved successfully</string>
+    <string name="error_server_address_empty">Server address cannot be empty</string>
+    <string name="error_server_secret_empty">Shared secret cannot be empty</string>
+    <string name="error_server_address_format">Server address must be in format IP:PORT</string>
+    <string name="error_server_port_invalid">Port must be between 1 and 65535</string>
+
+    <!-- Latency Simulation -->
+    <string name="latency_simulation_title">Latency Simulation</string>
+    <string name="outbound_latency_label">Outbound (Upstream)</string>
+    <string name="inbound_latency_label">Inbound (Downstream)</string>
+
+    <!-- App Scanning -->
+    <string name="app_scanning_title">App Scanning</string>
+    <string name="app_scanning_description">Scan installed applications to find those with satellite data optimization meta-data.</string>
+    <string name="scan_apps">Scan Applications</string>
+    <string name="scanning_in_progress">Scanning applications…</string>
+
+    <!-- Allowed Apps List -->
+    <string name="allowed_apps_title">Allowed Applications</string>
+    <string name="allowed_apps_count">0 apps</string>
+    <string name="no_allowed_apps">No allowed applications found.\nInstall apps with the required meta-data to enable VPN access.</string>
+
+    <!-- UDP Echo Test -->
+    <string name="udp_echo_test_title">UDP Echo Test</string>
+    <string name="udp_echo_test_description">Test connectivity to the UDP echo server</string>
+    <string name="test_udp_echo">Test UDP Echo</string>
+    <string name="testing_udp_echo">Testing…</string>
+
+    <!-- Common -->
+    <string name="appbar_scrolling_view_behavior" translatable="false">com.google.android.material.appbar.AppBarLayout$ScrollingViewBehavior</string>
+</resources>
