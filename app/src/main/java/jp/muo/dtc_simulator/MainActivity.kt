@@ -1,7 +1,10 @@
 package jp.muo.dtc_simulator
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.util.Log
@@ -13,6 +16,8 @@ import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.appbar.MaterialToolbar
@@ -83,6 +88,7 @@ class MainActivity : AppCompatActivity() {
         setupLatencyControls()
         setupStatsTimer()
         updateUdpEchoDescription()
+        checkNotificationPermission()
 
         // Auto-scan on startup (background thread)
         Thread {
@@ -135,6 +141,28 @@ class MainActivity : AppCompatActivity() {
 
         sliderOutboundLatency?.addOnChangeListener(listener)
         sliderInboundLatency?.addOnChangeListener(listener)
+    }
+
+    /**
+     * Check and request notification permission for Android 13+
+     */
+    private fun checkNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST_CODE)
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Log.i(TAG, "Notification permission granted")
+            } else {
+                Toast.makeText(this, "Notification permission is required for VPN service to run correctly in background", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     /**
@@ -625,6 +653,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val VPN_REQUEST_CODE = 1
+        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 2
         private const val STATS_UPDATE_INTERVAL_MS = 1000 // 1 second
 
         // VPN Mode constants
