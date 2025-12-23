@@ -85,8 +85,8 @@ class DtcVpnService : VpnService() {
         // フォアグラウンドサービスとして通知表示
         startForegroundWithNotification()
 
-        // WakeLockの取得 (10分間。再送出時に必要。トラフィックがあれば維持される)
-        wakeLock?.acquire(10 * 60 * 1000L)
+        // WakeLockの取得 (再送出時に必要。トラフィックがあれば維持される)
+        wakeLock?.acquire()
 
         // Get VPN mode from intent (default to LOCAL mode)
         val vpnMode = intent?.getStringExtra(MainActivity.EXTRA_VPN_MODE) ?: MainActivity.VPN_MODE_LOCAL

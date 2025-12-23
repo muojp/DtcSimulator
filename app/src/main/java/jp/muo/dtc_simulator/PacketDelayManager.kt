@@ -1,6 +1,7 @@
 package jp.muo.dtc_simulator
 
 import android.os.SystemClock
+import android.util.Log
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -10,6 +11,10 @@ import java.util.concurrent.TimeUnit
  * Holds packets in a queue and releases them after a specified latency.
  */
 class PacketDelayManager {
+    companion object {
+        private const val TAG = "PacketDelayManager"
+    }
+
     private data class DelayedPacket(
         val data: ByteArray,
         val releaseTime: Long
@@ -45,6 +50,8 @@ class PacketDelayManager {
         val releaseTime = if (latencyMs <= 0) now else now + latencyMs
         queue.offer(DelayedPacket(packetData, releaseTime))
         
+        Log.v(TAG, "Packet added: size=$length, releaseIn=${releaseTime - now}ms, qSize=${queue.size}")
+        
         synchronized(lock) {
             lock.notifyAll()
         }
@@ -58,7 +65,11 @@ class PacketDelayManager {
         val now = SystemClock.elapsedRealtime()
         val head = queue.peek()
         if (head != null && head.releaseTime <= now) {
-            return queue.poll()?.data
+            val packet = queue.poll()
+            if (packet != null) {
+                Log.v(TAG, "Packet released: size=${packet.data.size}, delay=${now - packet.releaseTime}ms")
+                return packet.data
+            }
         }
         return null
     }
@@ -79,14 +90,30 @@ class PacketDelayManager {
                 } else {
                     val waitTime = (head.releaseTime - now).coerceAtMost(maxWaitMs)
                     if (waitTime > 0) {
-                        lock.wait(waitTime)
+                        try {
+                            lock.wait(waitTime)
+                        } catch (e: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                        }
                     }
                 }
             } else {
-                lock.wait(maxWaitMs)
+                try {
+                    lock.wait(maxWaitMs)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
             }
         }
-        return pollReadyPacket()
+        val result = pollReadyPacket()
+        if (result == null && queue.isNotEmpty()) {
+            val now = SystemClock.elapsedRealtime()
+            val head = queue.peek()
+            if (head != null) {
+                Log.d(TAG, "pollReadyPacketBlocking returned null but queue not empty. Next in ${head.releaseTime - now}ms")
+            }
+        }
+        return result
     }
 
     /**

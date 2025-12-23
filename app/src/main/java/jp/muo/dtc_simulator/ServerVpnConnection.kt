@@ -101,37 +101,36 @@ class ServerVpnConnection(
     }
 
     override fun run() {
-        try {
-            Log.i(TAG, "Starting connection to $mServerName:$mServerPort")
+        Log.i(TAG, "Starting connection to $mServerName:$mServerPort")
+        val serverAddress: SocketAddress = InetSocketAddress(mServerName, mServerPort)
 
-            val serverAddress: SocketAddress = InetSocketAddress(mServerName, mServerPort)
-
-            // Try to create the tunnel several times
-            var attempt = 0
-            while (attempt < 10 && mRunning) {
+        // Try to create the tunnel several times
+        var attempt = 0
+        while (attempt < 10 && mRunning) {
+            try {
                 // Reset the counter if we were connected
                 if (run(serverAddress)) {
                     attempt = 0
                 }
-
-                // Sleep for a while. This also checks if we got interrupted.
-                if (mRunning) {
-                    Log.i(
-                        TAG,
-                        "Connection lost or failed, retrying in " + RECONNECT_WAIT_MS + "ms..."
-                    )
-                    Thread.sleep(RECONNECT_WAIT_MS)
-                }
-                ++attempt
+            } catch (e: Exception) {
+                Log.e(TAG, "Connection attempt failed: ${e.message}")
             }
-            Log.i(TAG, "Giving up after multiple attempts")
-        } catch (e: IOException) {
-            Log.e(TAG, "Connection failed", e)
-        } catch (e: InterruptedException) {
-            Log.e(TAG, "Connection failed", e)
-        } catch (e: IllegalArgumentException) {
-            Log.e(TAG, "Connection failed", e)
+
+            // Sleep for a while. This also checks if we got interrupted.
+            if (mRunning) {
+                Log.i(
+                    TAG,
+                    "Connection lost or failed, retrying in " + RECONNECT_WAIT_MS + "ms..."
+                )
+                try {
+                    Thread.sleep(RECONNECT_WAIT_MS)
+                } catch (e: InterruptedException) {
+                    break
+                }
+            }
+            ++attempt
         }
+        Log.i(TAG, "Giving up after multiple attempts or service stopped")
     }
 
     @Throws(IOException::class, InterruptedException::class, IllegalArgumentException::class)
@@ -211,20 +210,27 @@ class ServerVpnConnection(
 
                         val outgoingWriterThread = Thread({
                             try {
+                                Log.i(TAG, "Outgoing writer thread started")
                                 while (mRunning) {
                                     val data = outboundDelayManager.pollReadyPacketBlocking(100)
                                     if (data != null) {
-                                        if (mTunnel != null && mTunnel!!.isConnected) {
+                                        val tunnel = mTunnel
+                                        if (tunnel != null && tunnel.isConnected) {
                                             val buffer = ByteBuffer.wrap(data)
                                             val sent = tunnel.write(buffer)
+                                            Log.v(TAG, "Sent packet to tunnel: $sent bytes")
                                             if (sent > 0) {
                                                 stats.recordSent(sent)
                                             }
+                                        } else {
+                                            Log.w(TAG, "Tunnel not ready for writing: tunnel=$tunnel, isConnected=${tunnel?.isConnected}")
                                         }
                                     }
                                 }
                             } catch (e: Exception) {
                                 if (mRunning) Log.e(TAG, "Outgoing writer error", e)
+                            } finally {
+                                Log.i(TAG, "Outgoing writer thread exiting")
                             }
                         }, "VpnOutgoingWriter")
                         outgoingWriterThread.start()
@@ -232,14 +238,19 @@ class ServerVpnConnection(
                         // 2. Incoming loop (Server -> DelayManager -> TUN)
                         val incomingWriterThread = Thread({
                             try {
+                                Log.i(TAG, "Incoming writer thread started")
                                 while (mRunning) {
                                     val data = inboundDelayManager.pollReadyPacketBlocking(100)
                                     if (data != null) {
+                                        Log.v(TAG, "Writing packet to TUN: ${data.size} bytes")
                                         out.write(data)
+                                        out.flush()
                                     }
                                 }
                             } catch (e: Exception) {
                                 if (mRunning) Log.e(TAG, "Incoming writer error", e)
+                            } finally {
+                                Log.i(TAG, "Incoming writer thread exiting")
                             }
                         }, "VpnIncomingWriter")
                         incomingWriterThread.start()
@@ -250,27 +261,51 @@ class ServerVpnConnection(
 
                         var lastSendTime = System.currentTimeMillis()
                         var lastStatsUpdate = System.currentTimeMillis()
+                        var lastAliveLog = System.currentTimeMillis()
+                        var lastReceiveTime = System.currentTimeMillis()
+                        
                         while (mRunning) {
-                            val selected = selector.select(5000)
+                            val selected = try {
+                                selector.select(5000)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Selector select error", e)
+                                0
+                            }
                             val timeNow = System.currentTimeMillis()
+
+                            if (timeNow - lastAliveLog > 30000) {
+                                Log.i(TAG, "Selector loop alive, selected=$selected, inQ=${inboundDelayManager.queueSize}, outQ=${outboundDelayManager.queueSize}, tunnelOpen=${mTunnel?.isOpen}, tunnelConnected=${mTunnel?.isConnected}")
+                                lastAliveLog = timeNow
+                            }
 
                             if (selected > 0) {
                                 val keys = selector.selectedKeys().iterator()
                                 while (keys.hasNext()) {
-                                    keys.next()
+                                    val key = keys.next()
                                     keys.remove()
+
+                                    if (!key.isValid || !key.isReadable) continue
 
                                     packet.clear()
                                     val length = tunnel.read(packet)
                                     if (length > 0) {
+                                        lastReceiveTime = timeNow
                                         if (packet.get(0).toInt() != 0) {
+                                            Log.v(TAG, "Received packet from tunnel: $length bytes")
                                             stats.recordReceived(length)
                                             inboundDelayManager.addPacket(packet.array(), length)
                                         } else {
                                             Log.d(TAG, "[Control] Received control message ($length bytes)")
                                         }
+                                    } else if (length < 0) {
+                                        Log.w(TAG, "Tunnel read returned -1, connection might be closed")
                                     }
                                 }
+                            }
+
+                            // Check for silence timeout (Recovery logic)
+                            if (timeNow - lastReceiveTime > 60000) {
+                                throw IOException("No inbound traffic for 60s. Potential OS-level UDP block.")
                             }
 
                             // Update buffer statistics periodically
@@ -283,11 +318,15 @@ class ServerVpnConnection(
                             }
 
                             if (lastSendTime + KEEPALIVE_INTERVAL_MS <= timeNow) {
-                                packet.clear()
-                                packet.put(0.toByte()).limit(1)
-                                for (i in 0..2) {
-                                    packet.position(0)
-                                    tunnel.write(packet)
+                                val tunnelForKA = mTunnel
+                                if (tunnelForKA != null && tunnelForKA.isConnected) {
+                                    Log.d(TAG, "Sending keep-alive...")
+                                    packet.clear()
+                                    packet.put(0.toByte()).limit(1)
+                                    for (i in 0..2) {
+                                        packet.position(0)
+                                        tunnelForKA.write(packet)
+                                    }
                                 }
                                 lastSendTime = timeNow
                             }
