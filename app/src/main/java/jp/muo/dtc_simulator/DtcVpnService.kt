@@ -326,16 +326,11 @@ class DtcVpnService : VpnService() {
             .setOngoing(true)
             .build()
 
-        // Android 14 (API 34) 以降では、specialUseタイプを指定
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        startForeground(
+            NOTIFICATION_ID,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+        )
         Log.i(TAG, "Foreground notification displayed")
     }
 
