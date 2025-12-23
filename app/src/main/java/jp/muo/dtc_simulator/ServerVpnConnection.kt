@@ -34,6 +34,8 @@ class ServerVpnConnection(
 // Allowlist: 許可されたパッケージ
     private val mAllowedPackages: MutableSet<String>
 ) : Runnable {
+    val instanceId = System.currentTimeMillis() % 10000
+
     /**
      * Callback interface to let the VPN service know about connection establishment
      */
@@ -41,8 +43,13 @@ class ServerVpnConnection(
         fun onEstablish(tunInterface: ParcelFileDescriptor?)
     }
 
+    interface OnDisconnectListener {
+        fun onDisconnect()
+    }
+
     private var mConfigureIntent: PendingIntent? = null
     private var mOnEstablishListener: OnEstablishListener? = null
+    private var mOnDisconnectListener: OnDisconnectListener? = null
 
     @Volatile
     private var mRunning = true
@@ -65,6 +72,10 @@ class ServerVpnConnection(
         mOnEstablishListener = listener
     }
 
+    fun setOnDisconnectListener(listener: OnDisconnectListener?) {
+        mOnDisconnectListener = listener
+    }
+
     /**
      * Update latency settings
      */
@@ -78,6 +89,7 @@ class ServerVpnConnection(
      * Stop the connection and send disconnect message to server
      */
     fun stop() {
+        Log.i(TAG, "[$instanceId] stop() called")
         mRunning = false
 
         val tunnel = mTunnel
@@ -90,47 +102,33 @@ class ServerVpnConnection(
                         val disconnect = ByteBuffer.allocate(2)
                         disconnect.put(0.toByte()).put(0xFF.toByte()).flip()
                         tunnel.write(disconnect)
-                        Log.i(TAG, "Sent disconnect message to server")
+                        Log.i(TAG, "[$instanceId] Sent disconnect message to server")
                     }
                     tunnel.close()
+                    Log.i(TAG, "[$instanceId] Tunnel closed")
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to close tunnel safely", e)
+                    Log.w(TAG, "[$instanceId] Failed to close tunnel safely", e)
                 }
             }.start()
         }
     }
 
     override fun run() {
-        Log.i(TAG, "Starting connection to $mServerName:$mServerPort")
+        Log.i(TAG, "[$instanceId] Starting connection to $mServerName:$mServerPort")
         val serverAddress: SocketAddress = InetSocketAddress(mServerName, mServerPort)
 
-        // Try to create the tunnel several times
-        var attempt = 0
-        while (attempt < 10 && mRunning) {
-            try {
-                // Reset the counter if we were connected
-                if (run(serverAddress)) {
-                    attempt = 0
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Connection attempt failed: ${e.message}")
+        try {
+            if (!run(serverAddress)) {
+                Log.w(TAG, "[$instanceId] Connection failed or was closed")
             }
-
-            // Sleep for a while. This also checks if we got interrupted.
-            if (mRunning) {
-                Log.i(
-                    TAG,
-                    "Connection lost or failed, retrying in " + RECONNECT_WAIT_MS + "ms..."
-                )
-                try {
-                    Thread.sleep(RECONNECT_WAIT_MS)
-                } catch (e: InterruptedException) {
-                    break
-                }
-            }
-            ++attempt
+        } catch (e: Exception) {
+            Log.e(TAG, "[$instanceId] Connection error: ${e.message}", e)
+        } finally {
+            mRunning = false
+            Log.i(TAG, "[$instanceId] Calling onDisconnect")
+            mOnDisconnectListener?.onDisconnect()
+            Log.i(TAG, "[$instanceId] ServerVpnConnection thread exiting")
         }
-        Log.i(TAG, "Giving up after multiple attempts or service stopped")
     }
 
     @Throws(IOException::class, InterruptedException::class, IllegalArgumentException::class)
@@ -144,30 +142,30 @@ class ServerVpnConnection(
                 mTunnel = tunnel
                 // Protect the tunnel before connecting to avoid loopback
                 check(mService.protect(tunnel.socket())) { "Cannot protect the tunnel" }
-                Log.i(TAG, "Socket protected successfully")
+                Log.i(TAG, "[$instanceId] Socket protected successfully")
 
                 // Connect to the server
-                Log.i(TAG, "Connecting to server: $server")
+                Log.i(TAG, "[$instanceId] Connecting to server: $server")
                 tunnel.connect(server)
-                Log.i(TAG, "Connected to server: " + tunnel.remoteAddress)
+                Log.i(TAG, "[$instanceId] Connected to server: " + tunnel.remoteAddress)
 
                 // Put the tunnel into non-blocking mode for handshake and Selector
                 tunnel.configureBlocking(false)
-                Log.d(TAG, "Tunnel set to non-blocking mode")
+                Log.d(TAG, "[$instanceId] Tunnel set to non-blocking mode")
 
                 // Authenticate and configure the virtual network interface
                 iface = handshake(tunnel)
 
                 // Now we are connected
                 connected = true
-                Log.i(TAG, "Connection established")
+                Log.i(TAG, "[$instanceId] Connection established")
 
                 val vpnFd = iface!!.fileDescriptor
                 FileInputStream(vpnFd).use { `in` ->
                     FileOutputStream(vpnFd).use { out ->
 
                         // 1. Event-driven outgoing reader (TUN -> DelayManager -> Server)
-                        val outgoingHandlerThread = HandlerThread("VpnOutgoingReader").apply { start() }
+                        val outgoingHandlerThread = HandlerThread("VpnOutgoingReader-$instanceId").apply { start() }
                         val outgoingMessageQueue = outgoingHandlerThread.looper.queue
 
                         val readerPacket = ByteBuffer.allocate(MAX_PACKET_SIZE)
@@ -183,7 +181,7 @@ class ServerVpnConnection(
                                             if (length > 0) {
                                                 outboundDelayManager.addPacket(readerPacket.array(), length)
                                             } else if (length < 0) {
-                                                Log.i(TAG, "VPN interface closed")
+                                                Log.i(TAG, "[$instanceId] VPN interface closed")
                                                 return 0
                                             } else {
                                                 // No more data available
@@ -193,7 +191,7 @@ class ServerVpnConnection(
                                         // Continue monitoring
                                         return MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT
                                     } catch (e: Exception) {
-                                        if (mRunning) Log.e(TAG, "Outgoing reader error", e)
+                                        if (mRunning) Log.e(TAG, "[$instanceId] Outgoing reader error", e)
                                         return 0
                                     }
                                 }
@@ -206,11 +204,11 @@ class ServerVpnConnection(
                             MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT,
                             fdListener
                         )
-                        Log.d(TAG, "Event-driven VPN reader registered")
+                        Log.d(TAG, "[$instanceId] Event-driven VPN reader registered")
 
                         val outgoingWriterThread = Thread({
                             try {
-                                Log.i(TAG, "Outgoing writer thread started")
+                                Log.i(TAG, "[$instanceId] Outgoing writer thread started")
                                 while (mRunning) {
                                     val data = outboundDelayManager.pollReadyPacketBlocking(100)
                                     if (data != null) {
@@ -218,41 +216,41 @@ class ServerVpnConnection(
                                         if (tunnel != null && tunnel.isConnected) {
                                             val buffer = ByteBuffer.wrap(data)
                                             val sent = tunnel.write(buffer)
-                                            Log.v(TAG, "Sent packet to tunnel: $sent bytes")
+                                            Log.v(TAG, "[$instanceId] Sent packet to tunnel: $sent bytes")
                                             if (sent > 0) {
                                                 stats.recordSent(sent)
                                             }
                                         } else {
-                                            Log.w(TAG, "Tunnel not ready for writing: tunnel=$tunnel, isConnected=${tunnel?.isConnected}")
+                                            Log.w(TAG, "[$instanceId] Tunnel not ready for writing: tunnel=$tunnel, isConnected=${tunnel?.isConnected}")
                                         }
                                     }
                                 }
                             } catch (e: Exception) {
-                                if (mRunning) Log.e(TAG, "Outgoing writer error", e)
+                                if (mRunning) Log.e(TAG, "[$instanceId] Outgoing writer error", e)
                             } finally {
-                                Log.i(TAG, "Outgoing writer thread exiting")
+                                Log.i(TAG, "[$instanceId] Outgoing writer thread exiting")
                             }
-                        }, "VpnOutgoingWriter")
+                        }, "VpnOutgoingWriter-$instanceId")
                         outgoingWriterThread.start()
 
                         // 2. Incoming loop (Server -> DelayManager -> TUN)
                         val incomingWriterThread = Thread({
                             try {
-                                Log.i(TAG, "Incoming writer thread started")
+                                Log.i(TAG, "[$instanceId] Incoming writer thread started")
                                 while (mRunning) {
                                     val data = inboundDelayManager.pollReadyPacketBlocking(100)
                                     if (data != null) {
-                                        Log.v(TAG, "Writing packet to TUN: ${data.size} bytes")
+                                        Log.v(TAG, "[$instanceId] Writing packet to TUN: ${data.size} bytes")
                                         out.write(data)
                                         out.flush()
                                     }
                                 }
                             } catch (e: Exception) {
-                                if (mRunning) Log.e(TAG, "Incoming writer error", e)
+                                if (mRunning) Log.e(TAG, "[$instanceId] Incoming writer error", e)
                             } finally {
-                                Log.i(TAG, "Incoming writer thread exiting")
+                                Log.i(TAG, "[$instanceId] Incoming writer thread exiting")
                             }
-                        }, "VpnIncomingWriter")
+                        }, "VpnIncomingWriter-$instanceId")
                         incomingWriterThread.start()
 
                         val selector = Selector.open()
@@ -264,17 +262,21 @@ class ServerVpnConnection(
                         var lastAliveLog = System.currentTimeMillis()
                         var lastReceiveTime = System.currentTimeMillis()
                         
-                        while (mRunning) {
+                        while (mRunning && !Thread.currentThread().isInterrupted) {
                             val selected = try {
                                 selector.select(5000)
                             } catch (e: Exception) {
-                                Log.e(TAG, "Selector select error", e)
+                                if (e is InterruptedException || e.cause is InterruptedException) {
+                                    Log.i(TAG, "[$instanceId] Selector interrupted")
+                                    break
+                                }
+                                Log.e(TAG, "[$instanceId] Selector select error", e)
                                 0
                             }
                             val timeNow = System.currentTimeMillis()
 
                             if (timeNow - lastAliveLog > 30000) {
-                                Log.i(TAG, "Selector loop alive, selected=$selected, inQ=${inboundDelayManager.queueSize}, outQ=${outboundDelayManager.queueSize}, tunnelOpen=${mTunnel?.isOpen}, tunnelConnected=${mTunnel?.isConnected}")
+                                Log.i(TAG, "[$instanceId] Selector loop alive, selected=$selected, inQ=${inboundDelayManager.queueSize}, outQ=${outboundDelayManager.queueSize}, tunnelOpen=${mTunnel?.isOpen}, tunnelConnected=${mTunnel?.isConnected}")
                                 lastAliveLog = timeNow
                             }
 
@@ -291,14 +293,14 @@ class ServerVpnConnection(
                                     if (length > 0) {
                                         lastReceiveTime = timeNow
                                         if (packet.get(0).toInt() != 0) {
-                                            Log.v(TAG, "Received packet from tunnel: $length bytes")
+                                            Log.v(TAG, "[$instanceId] Received packet from tunnel: $length bytes")
                                             stats.recordReceived(length)
                                             inboundDelayManager.addPacket(packet.array(), length)
                                         } else {
-                                            Log.d(TAG, "[Control] Received control message ($length bytes)")
+                                            Log.d(TAG, "[$instanceId] [Control] Received control message ($length bytes)")
                                         }
                                     } else if (length < 0) {
-                                        Log.w(TAG, "Tunnel read returned -1, connection might be closed")
+                                        Log.w(TAG, "[$instanceId] Tunnel read returned -1, connection might be closed")
                                     }
                                 }
                             }
@@ -320,7 +322,7 @@ class ServerVpnConnection(
                             if (lastSendTime + KEEPALIVE_INTERVAL_MS <= timeNow) {
                                 val tunnelForKA = mTunnel
                                 if (tunnelForKA != null && tunnelForKA.isConnected) {
-                                    Log.d(TAG, "Sending keep-alive...")
+                                    Log.d(TAG, "[$instanceId] Sending keep-alive...")
                                     packet.clear()
                                     packet.put(0.toByte()).limit(1)
                                     for (i in 0..2) {
@@ -337,9 +339,9 @@ class ServerVpnConnection(
                             outgoingMessageQueue.removeOnFileDescriptorEventListener(vpnFd)
                             outgoingHandlerThread.quitSafely()
                             outgoingHandlerThread.join(1000)
-                            Log.d(TAG, "Event-driven VPN reader cleaned up")
+                            Log.d(TAG, "[$instanceId] Event-driven VPN reader cleaned up")
                         } catch (e: Exception) {
-                            Log.w(TAG, "Error cleaning up event listener", e)
+                            Log.w(TAG, "[$instanceId] Error cleaning up event listener", e)
                         }
                     }
                 }
@@ -361,7 +363,7 @@ class ServerVpnConnection(
 
     @Throws(IOException::class, InterruptedException::class)
     private fun handshake(tunnel: DatagramChannel): ParcelFileDescriptor? {
-        Log.i(TAG, "Starting handshake with server...")
+        Log.i(TAG, "[$instanceId] Starting handshake with server...")
 
         // Send the shared secret (must be null-terminated for the server's strcmp)
         val packet = ByteBuffer.allocate(1024)
@@ -373,10 +375,10 @@ class ServerVpnConnection(
         for (i in 0..2) {
             packet.position(0)
             val sent = tunnel.write(packet)
-            Log.d(TAG, "Handshake attempt " + (i + 1) + ": sent " + sent + " bytes")
+            Log.d(TAG, "[$instanceId] Handshake attempt " + (i + 1) + ": sent " + sent + " bytes")
         }
         packet.clear()
-        Log.i(TAG, "Sent handshake message (secret) to server, waiting for response...")
+        Log.i(TAG, "[$instanceId] Sent handshake message (secret) to server, waiting for response...")
 
         // Wait for the parameters within a limited time
         var i = 0
@@ -391,13 +393,13 @@ class ServerVpnConnection(
             if (length > 0) {
                 Log.d(
                     TAG,
-                    "Received packet: $length bytes, first byte: 0x" + String.format(
+                    "[$instanceId] Received packet: $length bytes, first byte: 0x" + String.format(
                         "%02X",
                         packet.get(0)
                     )
                 )
                 if (packet.get(0).toInt() == 0) {
-                    Log.i(TAG, "Handshake successful, received VPN parameters from server")
+                    Log.i(TAG, "[$instanceId] Handshake successful, received VPN parameters from server")
                     return configure(
                         String(
                             packet.array(),
@@ -409,7 +411,7 @@ class ServerVpnConnection(
             } else if (i % 10 == 0 && i > 0) {
                 Log.d(
                     TAG,
-                    "Waiting for handshake response... attempt $i/$MAX_HANDSHAKE_ATTEMPTS"
+                    "[$instanceId] Waiting for handshake response... attempt $i/$MAX_HANDSHAKE_ATTEMPTS"
                 )
             }
             ++i
@@ -423,7 +425,7 @@ class ServerVpnConnection(
 
     @Throws(IllegalArgumentException::class)
     private fun configure(parameters: String): ParcelFileDescriptor? {
-        Log.i(TAG, "Configuring VPN with parameters: $parameters")
+        Log.i(TAG, "[$instanceId] Configuring VPN with parameters: $parameters")
 
         // Configure a builder while parsing the parameters
         val builder = mService.Builder()
@@ -439,27 +441,27 @@ class ServerVpnConnection(
                 when (fields[0][0]) {
                     'm' -> {
                         builder.setMtu(fields[1].toShort().toInt())
-                        Log.d(TAG, "Set MTU: " + fields[1])
+                        Log.d(TAG, "[$instanceId] Set MTU: " + fields[1])
                     }
 
                     'a' -> {
                         builder.addAddress(fields[1], fields[2].toInt())
-                        Log.d(TAG, "Add address: " + fields[1] + "/" + fields[2])
+                        Log.d(TAG, "[$instanceId] Add address: " + fields[1] + "/" + fields[2])
                     }
 
                     'r' -> {
                         builder.addRoute(fields[1], fields[2].toInt())
-                        Log.d(TAG, "Add route: " + fields[1] + "/" + fields[2])
+                        Log.d(TAG, "[$instanceId] Add route: " + fields[1] + "/" + fields[2])
                     }
 
                     'd' -> {
                         builder.addDnsServer(fields[1])
-                        Log.d(TAG, "Add DNS: " + fields[1])
+                        Log.d(TAG, "[$instanceId] Add DNS: " + fields[1])
                     }
 
                     's' -> {
                         builder.addSearchDomain(fields[1])
-                        Log.d(TAG, "Add search domain: " + fields[1])
+                        Log.d(TAG, "[$instanceId] Add search domain: " + fields[1])
                     }
                 }
             } catch (_: NumberFormatException) {
@@ -473,12 +475,12 @@ class ServerVpnConnection(
             try {
                 builder.addAllowedApplication(packageName)
                 allowedCount++
-                Log.d(TAG, "Added allowed app to VPN: $packageName")
+                Log.d(TAG, "[$instanceId] Added allowed app to VPN: $packageName")
             } catch (e: PackageManager.NameNotFoundException) {
-                Log.w(TAG, "Package not found, skipping: $packageName", e)
+                Log.w(TAG, "[$instanceId] Package not found, skipping: $packageName", e)
             }
         }
-        Log.i(TAG, "Added $allowedCount allowed applications to VPN")
+        Log.i(TAG, "[$instanceId] Added $allowedCount allowed applications to VPN")
 
         // Set session and configure intent
         builder.setSession(mServerName).setConfigureIntent(mConfigureIntent!!)
@@ -489,7 +491,7 @@ class ServerVpnConnection(
             if (mOnEstablishListener != null) {
                 mOnEstablishListener!!.onEstablish(vpnInterface)
             }
-            Log.i(TAG, "VPN interface established: $vpnInterface")
+            Log.i(TAG, "[$instanceId] VPN interface established: $vpnInterface")
             return vpnInterface
         }
     }

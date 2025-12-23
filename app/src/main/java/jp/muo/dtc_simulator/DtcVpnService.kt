@@ -10,6 +10,8 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.util.Log
@@ -49,10 +51,17 @@ class DtcVpnService : VpnService() {
     private val mConnection = AtomicReference<Connection?>()
     private val mNextConnectionId = AtomicInteger(1)
 
+    private val mHandler = Handler(Looper.getMainLooper())
+
     private var allowlistManager: AllowlistManager? = null
     private var mConfigureIntent: PendingIntent? = null
 
     private var wakeLock: PowerManager.WakeLock? = null
+
+    // Connection settings for restarts
+    private var currentVpnMode: String? = null
+    private var currentServerAddress: String? = null
+    private var currentServerSecret: String? = null
 
     // Latency settings
     private var outboundLatencyMs = 0
@@ -86,7 +95,7 @@ class DtcVpnService : VpnService() {
         startForegroundWithNotification()
 
         // WakeLockの取得 (再送出時に必要。トラフィックがあれば維持される)
-        wakeLock?.acquire()
+        wakeLock?.acquire(10 * 60 * 1000L)
 
         // Get VPN mode from intent (default to LOCAL mode)
         val vpnMode = intent?.getStringExtra(MainActivity.EXTRA_VPN_MODE) ?: MainActivity.VPN_MODE_LOCAL
@@ -108,9 +117,11 @@ class DtcVpnService : VpnService() {
                 allowlistManager!!.scanAndBuildAllowlist()
                 Log.i(TAG, "Allowlist contains " + allowlistManager!!.allowlistSize + " packages")
 
-                // サーバー接続の開始
-                connect(vpnMode, serverAddress, serverSecret)
-                Log.i(TAG, "DtcVpnService connection initiated")
+                // サーバー接続の開始をHandler経由でシリアル化
+                mHandler.post {
+                    connect(vpnMode, serverAddress, serverSecret)
+                }
+                Log.i(TAG, "DtcVpnService connection initiated via Handler")
             } catch (e: Exception) {
                 Log.e(TAG, "Error during service start", e)
             }
@@ -155,6 +166,21 @@ class DtcVpnService : VpnService() {
      * サーバーへの接続を開始
      */
     private fun connect(vpnMode: String, serverAddressPort: String, sharedSecret: String) {
+        // Ensure this runs on the serialized handler
+        if (Looper.myLooper() != mHandler.looper) {
+            mHandler.post { connect(vpnMode, serverAddressPort, sharedSecret) }
+            return
+        }
+
+        Log.i(TAG, "Connect requested: mode=$vpnMode, addr=$serverAddressPort")
+        
+        this.currentVpnMode = vpnMode
+        this.currentServerAddress = serverAddressPort
+        this.currentServerSecret = sharedSecret
+
+        // Stop any existing connection attempt first
+        setConnectingThread(null)
+
         // Get allowed packages from AllowlistManager
         val allowedPackages = allowlistManager!!.getAllowedPackages().toMutableSet()
         Log.i(TAG, "Allowed packages: " + allowedPackages.size + " apps")
@@ -203,9 +229,49 @@ class DtcVpnService : VpnService() {
         connection.setConfigureIntent(mConfigureIntent!!)
         connection.setOnEstablishListener(object : ServerVpnConnection.OnEstablishListener {
             override fun onEstablish(tunInterface: ParcelFileDescriptor?) {
-                Log.i(TAG, "VPN connection established")
-                mConnectingThread.compareAndSet(thread, null)
-                setConnection(Connection(thread, tunInterface!!, connection, null))
+                mHandler.post {
+                    Log.i(TAG, "VPN connection established: thread=${thread.id}")
+                    if (mConnectingThread.get() === thread) {
+                        mConnectingThread.set(null)
+                        setConnection(Connection(thread, tunInterface!!, connection, null))
+                    } else {
+                        Log.w(TAG, "Established connection belongs to an outdated thread, closing it")
+                        try {
+                            tunInterface?.close()
+                            connection.stop()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error closing outdated connection", e)
+                        }
+                    }
+                }
+            }
+        })
+
+        connection.setOnDisconnectListener(object : ServerVpnConnection.OnDisconnectListener {
+            override fun onDisconnect() {
+                mHandler.post {
+                    if (instance != null && currentVpnMode == MainActivity.VPN_MODE_SERVER) {
+                        val isCurrentConnection = mConnection.get()?.serverVpnConnection === connection
+                        val isLatestAttempt = mConnectingThread.get() === thread
+                        
+                        if (isCurrentConnection || isLatestAttempt) {
+                            Log.i(TAG, "Active server connection disconnected (instance=${connection.instanceId}), scheduling reconnection...")
+                            
+                            // 3秒後に再接続を試行
+                            mHandler.postDelayed({
+                                val mode = currentVpnMode
+                                val addr = currentServerAddress
+                                val secret = currentServerSecret
+                                if (instance != null && mode != null && addr != null && secret != null) {
+                                    Log.i(TAG, "Watchdog: Triggering reconnection")
+                                    connect(mode, addr, secret)
+                                }
+                            }, 3000)
+                        } else {
+                            Log.i(TAG, "Outdated connection disconnected (instance=${connection.instanceId}), ignoring")
+                        }
+                    }
+                }
             }
         })
 
@@ -268,7 +334,10 @@ class DtcVpnService : VpnService() {
      */
     private fun setConnectingThread(thread: Thread?) {
         val oldThread = mConnectingThread.getAndSet(thread)
-        oldThread?.interrupt()
+        if (oldThread != null && oldThread !== thread) {
+            Log.i(TAG, "Interrupting old connecting thread: ${oldThread.id}")
+            oldThread.interrupt()
+        }
     }
 
     /**
@@ -276,7 +345,10 @@ class DtcVpnService : VpnService() {
      */
     private fun setConnection(connection: Connection?) {
         val oldConnection = mConnection.getAndSet(connection)
-        if (oldConnection != null) {
+        if (oldConnection != null && oldConnection !== connection) {
+            val currentThread = Thread.currentThread()
+            Log.i(TAG, "Closing old connection (oldThread=${oldConnection.thread?.id}, currentThread=${currentThread.id})")
+            
             try {
                 // Send disconnect message to server
                 if (oldConnection.serverVpnConnection != null) {
@@ -285,7 +357,15 @@ class DtcVpnService : VpnService() {
                 if (oldConnection.localVpnConnection != null) {
                     oldConnection.localVpnConnection!!.stop()
                 }
-                oldConnection.thread!!.interrupt()
+                
+                // Only interrupt if it's not the current thread
+                if (oldConnection.thread != null && oldConnection.thread !== currentThread) {
+                    Log.i(TAG, "Interrupting old connection thread: ${oldConnection.thread!!.id}")
+                    oldConnection.thread!!.interrupt()
+                } else if (oldConnection.thread === currentThread) {
+                    Log.i(TAG, "Old connection thread is the current thread, skipping interrupt")
+                }
+                
                 oldConnection.parcelFileDescriptor.close()
             } catch (e: IOException) {
                 Log.e(TAG, "Error closing VPN interface", e)
