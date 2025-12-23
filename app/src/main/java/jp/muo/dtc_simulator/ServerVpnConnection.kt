@@ -212,7 +212,7 @@ class ServerVpnConnection(
                         val outgoingWriterThread = Thread({
                             try {
                                 while (mRunning) {
-                                    val data = outboundDelayManager.pollReadyPacket()
+                                    val data = outboundDelayManager.pollReadyPacketBlocking(100)
                                     if (data != null) {
                                         if (mTunnel != null && mTunnel!!.isConnected) {
                                             val buffer = ByteBuffer.wrap(data)
@@ -221,8 +221,6 @@ class ServerVpnConnection(
                                                 stats.recordSent(sent)
                                             }
                                         }
-                                    } else {
-                                        Thread.sleep(outboundDelayManager.getTimeToNextReady().coerceIn(1, 100))
                                     }
                                 }
                             } catch (e: Exception) {
@@ -235,12 +233,9 @@ class ServerVpnConnection(
                         val incomingWriterThread = Thread({
                             try {
                                 while (mRunning) {
-                                    val data = inboundDelayManager.pollReadyPacket()
+                                    val data = inboundDelayManager.pollReadyPacketBlocking(100)
                                     if (data != null) {
                                         out.write(data)
-                                        stats.recordReceived(data.size)
-                                    } else {
-                                        Thread.sleep(inboundDelayManager.getTimeToNextReady().coerceIn(1, 100))
                                     }
                                 }
                             } catch (e: Exception) {
@@ -269,6 +264,7 @@ class ServerVpnConnection(
                                     val length = tunnel.read(packet)
                                     if (length > 0) {
                                         if (packet.get(0).toInt() != 0) {
+                                            stats.recordReceived(length)
                                             inboundDelayManager.addPacket(packet.array(), length)
                                         } else {
                                             Log.d(TAG, "[Control] Received control message ($length bytes)")
@@ -279,9 +275,9 @@ class ServerVpnConnection(
 
                             // Update buffer statistics periodically
                             if (timeNow - lastStatsUpdate > 500) {
-                                stats.updateBufferBytes(
-                                    outboundDelayManager.getQueuedBytes(),
-                                    inboundDelayManager.getQueuedBytes()
+                                stats.updateBufferStats(
+                                    outboundDelayManager.queueSize,
+                                    inboundDelayManager.queueSize
                                 )
                                 lastStatsUpdate = timeNow
                             }

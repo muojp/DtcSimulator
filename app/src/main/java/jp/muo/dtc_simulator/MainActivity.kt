@@ -512,16 +512,16 @@ class MainActivity : AppCompatActivity() {
             tvStatsReceived!!.text = formatBytes(stats.receivedBytes)
             tvStatsReceivedPackets!!.text = "${stats.receivedPackets} packets"
 
-            tvStatsOutgoingBuffer!!.text = formatBytes(stats.outgoingBufferBytes)
-            tvStatsIncomingBuffer!!.text = formatBytes(stats.incomingBufferBytes)
+            tvStatsOutgoingBuffer!!.text = "${stats.outgoingBufferBytes} packets"
+            tvStatsIncomingBuffer!!.text = "${stats.incomingBufferBytes} packets"
         } else {
             // No stats available, show zeros
             tvStatsSent!!.text = "0 B"
             tvStatsSentPackets!!.text = "0 packets"
             tvStatsReceived!!.text = "0 B"
             tvStatsReceivedPackets!!.text = "0 packets"
-            tvStatsOutgoingBuffer!!.text = "0 B"
-            tvStatsIncomingBuffer!!.text = "0 B"
+            tvStatsOutgoingBuffer!!.text = "0 packets"
+            tvStatsIncomingBuffer!!.text = "0 packets"
         }
     }
 

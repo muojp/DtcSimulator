@@ -28,6 +28,10 @@ class VpnStats {
     var incomingBufferBytes: Long = 0
         private set
 
+    @get:Synchronized
+    var incomingBufferPackets: Long = 0
+        private set
+
     @Synchronized
     fun recordSent(bytes: Int) {
         sentBytes += bytes.toLong()
@@ -41,8 +45,8 @@ class VpnStats {
     }
 
     @Synchronized
-    fun updateBufferBytes(outgoing: Long, incoming: Long) {
-        outgoingBufferBytes = outgoing
-        incomingBufferBytes = incoming
+    fun updateBufferStats(outboundCount: Int, inboundCount: Int) {
+        outgoingBufferBytes = outboundCount.toLong() // We use packets count here as a proxy for simplicity
+        incomingBufferBytes = inboundCount.toLong()
     }
 }

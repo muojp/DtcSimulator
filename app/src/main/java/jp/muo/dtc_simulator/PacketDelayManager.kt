@@ -1,7 +1,8 @@
 package jp.muo.dtc_simulator
 
-import java.util.concurrent.ConcurrentLinkedQueue
+import android.os.SystemClock
 import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.TimeUnit
 
 /**
  * PacketDelayManager - Manages packet delays for network simulation.
@@ -11,18 +12,16 @@ import java.util.concurrent.PriorityBlockingQueue
 class PacketDelayManager {
     private data class DelayedPacket(
         val data: ByteArray,
-        val arrivalTime: Long,
-        val sequenceNumber: Long
+        val releaseTime: Long
     ) : Comparable<DelayedPacket> {
         override fun compareTo(other: DelayedPacket): Int {
-            val timeCompare = arrivalTime.compareTo(other.arrivalTime)
-            if (timeCompare != 0) return timeCompare
-            return sequenceNumber.compareTo(other.sequenceNumber)
+            return releaseTime.compareTo(other.releaseTime)
         }
     }
 
     private val queue = PriorityBlockingQueue<DelayedPacket>()
-    private var nextSequenceNumber = 0L
+    private val lock = Object()
+    
     @Volatile
     private var latencyMs: Int = 0
 
@@ -31,16 +30,24 @@ class PacketDelayManager {
      */
     fun setLatency(ms: Int) {
         this.latencyMs = ms
+        synchronized(lock) {
+            lock.notifyAll()
+        }
     }
 
     /**
      * Add a packet to the delay queue
      */
-    @Synchronized
     fun addPacket(data: ByteArray, length: Int) {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         val packetData = data.copyOfRange(0, length)
-        queue.offer(DelayedPacket(packetData, now, nextSequenceNumber++))
+        
+        val releaseTime = if (latencyMs <= 0) now else now + latencyMs
+        queue.offer(DelayedPacket(packetData, releaseTime))
+        
+        synchronized(lock) {
+            lock.notifyAll()
+        }
     }
 
     /**
@@ -48,12 +55,38 @@ class PacketDelayManager {
      * Returns null if no packet is ready.
      */
     fun pollReadyPacket(): ByteArray? {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         val head = queue.peek()
-        if (head != null && (now - head.arrivalTime) >= latencyMs) {
+        if (head != null && head.releaseTime <= now) {
             return queue.poll()?.data
         }
         return null
+    }
+
+    /**
+     * Wait and poll for the next ready packet.
+     * @param maxWaitMs Maximum time to wait in milliseconds
+     * @return The packet data, or null if no packet became ready within the timeout
+     */
+    fun pollReadyPacketBlocking(maxWaitMs: Long): ByteArray? {
+        synchronized(lock) {
+            val now = SystemClock.elapsedRealtime()
+            val head = queue.peek()
+            
+            if (head != null) {
+                if (head.releaseTime <= now) {
+                    return queue.poll()?.data
+                } else {
+                    val waitTime = (head.releaseTime - now).coerceAtMost(maxWaitMs)
+                    if (waitTime > 0) {
+                        lock.wait(waitTime)
+                    }
+                }
+            } else {
+                lock.wait(maxWaitMs)
+            }
+        }
+        return pollReadyPacket()
     }
 
     /**
@@ -62,21 +95,19 @@ class PacketDelayManager {
     fun hasPackets(): Boolean = !queue.isEmpty()
 
     /**
+     * Get the number of packets currently in the queue
+     */
+    val queueSize: Int
+        get() = queue.size
+
+    /**
      * Get the time until the next packet is ready, in milliseconds.
      * Returns 0 if a packet is ready now, or a large value if the queue is empty.
      */
     fun getTimeToNextReady(): Long {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         val head = queue.peek() ?: return 1000L
-        val readyTime = head.arrivalTime + latencyMs
-        val diff = readyTime - now
+        val diff = head.releaseTime - now
         return if (diff < 0) 0 else diff
-    }
-
-    /**
-     * Get the total number of bytes currently queued.
-     */
-    fun getQueuedBytes(): Long {
-        return queue.sumOf { it.data.size.toLong() }
     }
 }

@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.io.IOException
@@ -51,6 +52,8 @@ class DtcVpnService : VpnService() {
     private var allowlistManager: AllowlistManager? = null
     private var mConfigureIntent: PendingIntent? = null
 
+    private var wakeLock: PowerManager.WakeLock? = null
+
     // Latency settings
     private var outboundLatencyMs = 0
     private var inboundLatencyMs = 0
@@ -70,6 +73,10 @@ class DtcVpnService : VpnService() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
+
+        // WakeLockの初期化
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DtcSimulator:VpnWakeLock")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -77,6 +84,9 @@ class DtcVpnService : VpnService() {
 
         // フォアグラウンドサービスとして通知表示
         startForegroundWithNotification()
+
+        // WakeLockの取得 (10分間。再送出時に必要。トラフィックがあれば維持される)
+        wakeLock?.acquire(10 * 60 * 1000L)
 
         // Get VPN mode from intent (default to LOCAL mode)
         val vpnMode = intent?.getStringExtra(MainActivity.EXTRA_VPN_MODE) ?: MainActivity.VPN_MODE_LOCAL
@@ -114,6 +124,11 @@ class DtcVpnService : VpnService() {
 
         // 接続の停止
         disconnect()
+
+        // WakeLockの解放
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+        }
 
         instance = null
         Log.i(TAG, "DtcVpnService stopped")

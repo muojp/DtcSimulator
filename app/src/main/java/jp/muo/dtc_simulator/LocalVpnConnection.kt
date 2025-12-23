@@ -146,12 +146,11 @@ class LocalVpnConnection(
             val outgoingWriterThread = Thread({
                 try {
                     while (running) {
-                        val data = outboundDelayManager.pollReadyPacket()
+                        val data = outboundDelayManager.pollReadyPacketBlocking(100)
                         if (data != null) {
                             forwardToNetwork(ByteBuffer.wrap(data))
-                        } else {
-                            Thread.sleep(outboundDelayManager.getTimeToNextReady().coerceIn(1, 100))
                         }
+                        stats.updateBufferStats(outboundDelayManager.queueSize, inboundDelayManager.queueSize)
                     }
                 } catch (e: Exception) {
                     if (running) Log.e(TAG, "Error in outgoing writer thread", e)
@@ -163,12 +162,11 @@ class LocalVpnConnection(
             val incomingWriterThread = Thread({
                 try {
                     while (running) {
-                        val data = inboundDelayManager.pollReadyPacket()
+                        val data = inboundDelayManager.pollReadyPacketBlocking(100)
                         if (data != null) {
                             outputStream.write(data)
-                        } else {
-                            Thread.sleep(inboundDelayManager.getTimeToNextReady().coerceIn(1, 100))
                         }
+                        stats.updateBufferStats(outboundDelayManager.queueSize, inboundDelayManager.queueSize)
                     }
                 } catch (e: Exception) {
                     if (running) Log.e(TAG, "Error in incoming writer thread", e)
@@ -177,7 +175,6 @@ class LocalVpnConnection(
             incomingWriterThread.start()
 
             var lastCleanupTime = System.currentTimeMillis()
-            var lastStatsUpdate = System.currentTimeMillis()
             while (running) {
                 // Process pending registrations
                 while (pendingRegistrations.isNotEmpty()) {
@@ -213,15 +210,6 @@ class LocalVpnConnection(
                             processConnectableKey(key, outputStream)
                         }
                     }
-                }
-
-                // Update buffer statistics periodically
-                if (now - lastStatsUpdate > 500) {
-                    stats.updateBufferBytes(
-                        outboundDelayManager.getQueuedBytes(),
-                        inboundDelayManager.getQueuedBytes()
-                    )
-                    lastStatsUpdate = now
                 }
 
                 // Periodic cleanup
