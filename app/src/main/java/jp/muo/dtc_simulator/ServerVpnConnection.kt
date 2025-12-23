@@ -3,7 +3,7 @@ package jp.muo.dtc_simulator
 import android.app.PendingIntent
 import android.content.pm.PackageManager
 import android.net.VpnService
-import android.os.ParcelFileDescriptor
+import android.os.*
 import android.util.Log
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -162,26 +162,52 @@ class ServerVpnConnection(
                 // Now we are connected
                 connected = true
                 Log.i(TAG, "Connection established")
-                FileInputStream(iface!!.fileDescriptor).use { `in` ->
-                    FileOutputStream(iface!!.fileDescriptor).use { out ->
 
-                        // 1. Outgoing loop (TUN -> DelayManager -> Server)
-                        val outgoingReaderThread = Thread({
-                            try {
-                                val packet = ByteBuffer.allocate(MAX_PACKET_SIZE)
-                                while (mRunning) {
-                                    val length = `in`.read(packet.array())
-                                    if (length > 0) {
-                                        outboundDelayManager.addPacket(packet.array(), length)
-                                    } else if (length < 0) {
-                                        break
+                val vpnFd = iface!!.fileDescriptor
+                FileInputStream(vpnFd).use { `in` ->
+                    FileOutputStream(vpnFd).use { out ->
+
+                        // 1. Event-driven outgoing reader (TUN -> DelayManager -> Server)
+                        val outgoingHandlerThread = HandlerThread("VpnOutgoingReader").apply { start() }
+                        val outgoingMessageQueue = outgoingHandlerThread.looper.queue
+
+                        val readerPacket = ByteBuffer.allocate(MAX_PACKET_SIZE)
+                        val fdListener = object : MessageQueue.OnFileDescriptorEventListener {
+                            override fun onFileDescriptorEvents(fd: java.io.FileDescriptor, events: Int): Int {
+                                if (!mRunning) return 0
+
+                                if (events and MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT != 0) {
+                                    try {
+                                        // Read all available packets
+                                        while (true) {
+                                            val length = `in`.read(readerPacket.array())
+                                            if (length > 0) {
+                                                outboundDelayManager.addPacket(readerPacket.array(), length)
+                                            } else if (length < 0) {
+                                                Log.i(TAG, "VPN interface closed")
+                                                return 0
+                                            } else {
+                                                // No more data available
+                                                break
+                                            }
+                                        }
+                                        // Continue monitoring
+                                        return MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT
+                                    } catch (e: Exception) {
+                                        if (mRunning) Log.e(TAG, "Outgoing reader error", e)
+                                        return 0
                                     }
                                 }
-                            } catch (e: Exception) {
-                                if (mRunning) Log.e(TAG, "Outgoing reader error", e)
+                                return MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT
                             }
-                        }, "VpnOutgoingReader")
-                        outgoingReaderThread.start()
+                        }
+
+                        outgoingMessageQueue.addOnFileDescriptorEventListener(
+                            vpnFd,
+                            MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT,
+                            fdListener
+                        )
+                        Log.d(TAG, "Event-driven VPN reader registered")
 
                         val outgoingWriterThread = Thread({
                             try {
@@ -228,7 +254,6 @@ class ServerVpnConnection(
                         val packet = ByteBuffer.allocate(MAX_PACKET_SIZE)
 
                         var lastSendTime = System.currentTimeMillis()
-                        var lastLogTime = System.currentTimeMillis()
                         var lastStatsUpdate = System.currentTimeMillis()
                         while (mRunning) {
                             val selected = selector.select(5000)
@@ -270,6 +295,16 @@ class ServerVpnConnection(
                                 }
                                 lastSendTime = timeNow
                             }
+                        }
+
+                        // Cleanup: remove file descriptor listener and stop handler thread
+                        try {
+                            outgoingMessageQueue.removeOnFileDescriptorEventListener(vpnFd)
+                            outgoingHandlerThread.quitSafely()
+                            outgoingHandlerThread.join(1000)
+                            Log.d(TAG, "Event-driven VPN reader cleaned up")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error cleaning up event listener", e)
                         }
                     }
                 }
