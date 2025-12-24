@@ -399,8 +399,8 @@ class DtcVpnService : VpnService() {
 
         // 通知の作成
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("DTC Simulator")
-            .setContentText("VPN service is running - Filtering network traffic")
+            .setContentTitle("DTC Network Simulator")
+            .setContentText("Simulating satellite DTC network latency")
             .setSmallIcon(R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -418,19 +418,17 @@ class DtcVpnService : VpnService() {
      * 通知チャンネルを作成する（Android 8.0以降）
      */
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_LOW
-            )
-            channel.description = "DTC Simulator VPN Service notifications"
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            CHANNEL_NAME,
+            NotificationManager.IMPORTANCE_LOW
+        )
+        channel.description = "DTC Simulator VPN Service notifications"
 
-            val manager = getSystemService(NotificationManager::class.java)
-            if (manager != null) {
-                manager.createNotificationChannel(channel)
-                Log.d(TAG, "Notification channel created")
-            }
+        val manager = getSystemService(NotificationManager::class.java)
+        if (manager != null) {
+            manager.createNotificationChannel(channel)
+            Log.d(TAG, "Notification channel created")
         }
     }
 
