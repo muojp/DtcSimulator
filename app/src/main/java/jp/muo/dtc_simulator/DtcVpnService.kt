@@ -316,7 +316,6 @@ class DtcVpnService : VpnService() {
             for (packageName in allowedPackages) {
                 try {
                     builder.addAllowedApplication(packageName)
-                    Log.d(TAG, "Added allowed app: $packageName")
                 } catch (e: PackageManager.NameNotFoundException) {
                     Log.w(TAG, "Package not found: $packageName", e)
                 }

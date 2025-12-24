@@ -216,7 +216,6 @@ class ServerVpnConnection(
                                         if (tunnel != null && tunnel.isConnected) {
                                             val buffer = ByteBuffer.wrap(data)
                                             val sent = tunnel.write(buffer)
-                                            Log.v(TAG, "[$instanceId] Sent packet to tunnel: $sent bytes")
                                             if (sent > 0) {
                                                 stats.recordSent(sent)
                                             }
@@ -240,7 +239,6 @@ class ServerVpnConnection(
                                 while (mRunning) {
                                     val data = inboundDelayManager.pollReadyPacketBlocking(100)
                                     if (data != null) {
-                                        Log.v(TAG, "[$instanceId] Writing packet to TUN: ${data.size} bytes")
                                         out.write(data)
                                         out.flush()
                                     }
@@ -293,7 +291,6 @@ class ServerVpnConnection(
                                     if (length > 0) {
                                         lastReceiveTime = timeNow
                                         if (packet.get(0).toInt() != 0) {
-                                            Log.v(TAG, "[$instanceId] Received packet from tunnel: $length bytes")
                                             stats.recordReceived(length)
                                             inboundDelayManager.addPacket(packet.array(), length)
                                         } else {
@@ -322,7 +319,6 @@ class ServerVpnConnection(
                             if (lastSendTime + KEEPALIVE_INTERVAL_MS <= timeNow) {
                                 val tunnelForKA = mTunnel
                                 if (tunnelForKA != null && tunnelForKA.isConnected) {
-                                    Log.d(TAG, "[$instanceId] Sending keep-alive...")
                                     packet.clear()
                                     packet.put(0.toByte()).limit(1)
                                     for (i in 0..2) {

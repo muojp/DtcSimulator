@@ -273,7 +273,6 @@ class LocalVpnConnection(
                     if (buffer != null) {
                         val written = channel.write(buffer)
                         if (written > 0) stats.recordSent(written)
-                        Log.v(TAG, "Flushed buffered TCP data: $written bytes")
                     }
                 }
             }
@@ -304,7 +303,6 @@ class LocalVpnConnection(
         packet.get(srcIpBytes)
         val srcAddress = InetAddress.getByAddress(srcIpBytes)
         if (srcAddress.hostAddress != "10.0.0.2") {
-            Log.v(TAG, "Discarding packet with unexpected source IP: ${srcAddress.hostAddress}")
             return
         }
 
@@ -394,7 +392,6 @@ class LocalVpnConnection(
         val udpDataStart = headerLength + 8
         val payloadLength = packet.limit() - udpDataStart
         if (payloadLength <= 0) {
-            Log.v(TAG, "Empty UDP payload from $srcAddress:$srcPort to $destAddress:$destPort")
             return
         }
 
@@ -504,7 +501,6 @@ class LocalVpnConnection(
                 sendTcpControlPacket(newSession, 0x12, newSession.mySequenceNum, newSession.theirSequenceNum, null)
                 newSession.mySequenceNum = (newSession.mySequenceNum + 1) and 0xFFFFFFFFL
             } else {
-                Log.v(TAG, "Discarding non-SYN TCP packet for new session: $sessionKey (Sending RST)")
                 sendTcpReset(srcAddress, srcPort, destAddress, destPort, ackNum, (seqNum + 1) and 0xFFFFFFFFL)
             }
             return
@@ -521,14 +517,12 @@ class LocalVpnConnection(
 
             if (isSyn) {
                 // Retransmitted SYN, resend SYN+ACK
-                Log.v(TAG, "TCP SYN retransmitted for $sessionKey")
                 sendTcpControlPacket(session, 0x12, (session.mySequenceNum - 1) and 0xFFFFFFFFL, session.theirSequenceNum, null)
                 return
             }
 
             if (session.state == TcpState.SYN_RECEIVED && isAck) {
                 session.state = TcpState.ESTABLISHED
-                Log.v(TAG, "TCP state established for $sessionKey")
             }
 
             if (session.state == TcpState.ESTABLISHED || session.state == TcpState.SYN_RECEIVED) {
@@ -538,7 +532,6 @@ class LocalVpnConnection(
                 // Validate sequence number for established sessions
                 if (payloadSize > 0) {
                     if (isBefore(seqNum, session.theirSequenceNum)) {
-                        Log.v(TAG, "TCP duplicate/old packet for $sessionKey (seqNum $seqNum < ${session.theirSequenceNum})")
                         // Resend ACK for their current position
                         sendTcpControlPacket(session, 0x10, session.mySequenceNum, session.theirSequenceNum, null)
                         return
@@ -551,7 +544,6 @@ class LocalVpnConnection(
                             return
                         }
                         
-                        Log.v(TAG, "TCP out-of-order packet for $sessionKey (seqNum $seqNum > ${session.theirSequenceNum}) - buffering")
                         val payload = ByteArray(payloadSize)
                         packet.position(payloadStart)
                         packet.get(payload)
@@ -585,7 +577,6 @@ class LocalVpnConnection(
                                         val reassembledWritten = channel.write(ByteBuffer.wrap(actualPayload))
                                         if (reassembledWritten > 0) stats.recordSent(reassembledWritten)
                                         session.theirSequenceNum = (session.theirSequenceNum + actualPayload.size) and 0xFFFFFFFFL
-                                        Log.v(TAG, "Reassembled TCP packet for $sessionKey (seqNum $nextSeq)")
                                     }
                                 } else {
                                     break

@@ -50,8 +50,6 @@ class PacketDelayManager {
         val releaseTime = if (latencyMs <= 0) now else now + latencyMs
         queue.offer(DelayedPacket(packetData, releaseTime))
         
-        Log.v(TAG, "Packet added: size=$length, releaseIn=${releaseTime - now}ms, qSize=${queue.size}")
-        
         synchronized(lock) {
             lock.notifyAll()
         }
@@ -67,7 +65,6 @@ class PacketDelayManager {
         if (head != null && head.releaseTime <= now) {
             val packet = queue.poll()
             if (packet != null) {
-                Log.v(TAG, "Packet released: size=${packet.data.size}, delay=${now - packet.releaseTime}ms")
                 return packet.data
             }
         }
@@ -106,13 +103,6 @@ class PacketDelayManager {
             }
         }
         val result = pollReadyPacket()
-        if (result == null && queue.isNotEmpty()) {
-            val now = SystemClock.elapsedRealtime()
-            val head = queue.peek()
-            if (head != null) {
-                Log.d(TAG, "pollReadyPacketBlocking returned null but queue not empty. Next in ${head.releaseTime - now}ms")
-            }
-        }
         return result
     }
 
