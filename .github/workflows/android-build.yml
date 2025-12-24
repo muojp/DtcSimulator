@@ -9,6 +9,8 @@ on:
       - 'settings.gradle.kts'
       - 'gradle/**'
       - 'gradle.properties'
+    tags:
+      - 'v*'
   # Pull requests are explicitly disabled to prevent spam/abuse on public repository
   # pull_request:
   workflow_dispatch:
@@ -45,6 +47,12 @@ jobs:
     - name: Run Unit Tests
       run: ./gradlew testDebugUnitTest
 
+    - name: Rename APK
+      if: success() && startsWith(github.ref, 'refs/tags/')
+      run: |
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/dtc-simulator-${TAG_NAME}-debug.apk
+
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
       with:
@@ -59,3 +67,13 @@ jobs:
         name: test-results
         path: app/build/test-results/testDebugUnitTest/
         retention-days: 7
+
+    - name: Create Draft Release
+      uses: softprops/action-gh-release@v2
+      if: success() && startsWith(github.ref, 'refs/tags/')
+      with:
+        draft: true
+        files: app/build/outputs/apk/debug/*.apk
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
