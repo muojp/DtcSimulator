@@ -26,7 +26,8 @@ import kotlin.concurrent.Volatile
  */
 class LocalVpnConnection(
     private val vpnService: VpnService,
-    private val vpnInterface: ParcelFileDescriptor
+    private val vpnInterface: ParcelFileDescriptor,
+    private val packetProcessor: PacketProcessor
 ) : Runnable {
     val instanceId = System.currentTimeMillis() % 10000
 
@@ -35,22 +36,12 @@ class LocalVpnConnection(
 
     private var mSelector: Selector? = null
 
-    // Latency managers
-    private val outboundDelayManager = PacketDelayManager()
-    private val inboundDelayManager = PacketDelayManager()
-
-    /**
-     * VPN traffic statistics
-     */
-    val stats: VpnStats = VpnStats()
-
     /**
      * Update latency settings
      */
     fun updateLatency(outboundMs: Int, inboundMs: Int) {
-        outboundDelayManager.setLatency(outboundMs)
-        inboundDelayManager.setLatency(inboundMs)
-        Log.d(TAG, "[$instanceId] Latency updated in LocalVpnConnection: out=$outboundMs, in=$inboundMs")
+        packetProcessor.setLatency(outboundMs, inboundMs)
+        Log.d(TAG, "[$instanceId] Latency updated via PacketProcessor: out=$outboundMs, in=$inboundMs")
     }
 
     // Session management
@@ -121,7 +112,7 @@ class LocalVpnConnection(
                             while (true) {
                                 val length = inputStream.read(readerPacket.array())
                                 if (length > 0) {
-                                    outboundDelayManager.addPacket(readerPacket.array(), length)
+                                    packetProcessor.processOutboundPacket(readerPacket.array(), length)
                                 } else if (length < 0) {
                                     Log.i(TAG, "[$instanceId] VPN interface closed (length < 0)")
                                     return 0
@@ -152,11 +143,11 @@ class LocalVpnConnection(
                 try {
                     Log.d(TAG, "[$instanceId] Outgoing writer thread starting")
                     while (running) {
-                        val data = outboundDelayManager.pollReadyPacketBlocking(100)
+                        val data = packetProcessor.pollReadyOutboundPacket(100)
                         if (data != null) {
                             forwardToNetwork(ByteBuffer.wrap(data))
                         }
-                        stats.updateBufferStats(outboundDelayManager.queueSize, inboundDelayManager.queueSize)
+                        packetProcessor.updateBufferStats()
                     }
                 } catch (e: Exception) {
                     if (running) Log.e(TAG, "[$instanceId] Error in outgoing writer thread", e)
@@ -171,11 +162,11 @@ class LocalVpnConnection(
                 try {
                     Log.d(TAG, "[$instanceId] Incoming writer thread starting")
                     while (running) {
-                        val data = inboundDelayManager.pollReadyPacketBlocking(100)
+                        val data = packetProcessor.pollReadyInboundPacket(100)
                         if (data != null) {
                             outputStream.write(data)
                         }
-                        stats.updateBufferStats(outboundDelayManager.queueSize, inboundDelayManager.queueSize)
+                        packetProcessor.updateBufferStats()
                     }
                 } catch (e: Exception) {
                     if (running) Log.e(TAG, "[$instanceId] Error in incoming writer thread", e)
@@ -209,7 +200,7 @@ class LocalVpnConnection(
                 val now = System.currentTimeMillis()
                 
                 if (now - lastAliveLog > 30000) {
-                    Log.i(TAG, "[$instanceId] Selector loop alive, selected=$selected, inQ=${inboundDelayManager.queueSize}, outQ=${outboundDelayManager.queueSize}")
+                    Log.i(TAG, "[$instanceId] Selector loop alive, selected=$selected, inQ=${packetProcessor.inboundQueueSize}, outQ=${packetProcessor.outboundQueueSize}")
                     lastAliveLog = now
                 }
 
@@ -261,7 +252,7 @@ class LocalVpnConnection(
                 val remoteAddress = channel.receive(responseBuffer)
                 if (remoteAddress != null && responseBuffer.position() > 0) {
                     responseBuffer.flip()
-                    stats.recordReceived(responseBuffer.limit())
+                    packetProcessor.recordReceived(responseBuffer.limit())
                     sendResponseToVpn(attachment, responseBuffer)
                 }
             } catch (e: IOException) {
@@ -289,7 +280,7 @@ class LocalVpnConnection(
                     val buffer = session.outBuffer.poll()
                     if (buffer != null) {
                         val written = channel.write(buffer)
-                        if (written > 0) stats.recordSent(written)
+                        if (written > 0) packetProcessor.recordSent(written)
                     }
                 }
             }
@@ -384,7 +375,7 @@ class LocalVpnConnection(
         // Calculate ICMP Checksum
         reply.putShort(22, calculateChecksum(reply.array(), 20, size - 20))
         
-        inboundDelayManager.addPacket(reply.array(), size)
+        packetProcessor.processInboundPacket(reply.array(), size)
         Log.d(TAG, "[$instanceId] Added ICMP Echo Reply to delay manager")
     }
 
@@ -446,7 +437,7 @@ class LocalVpnConnection(
         session.lastActive = System.currentTimeMillis()
         try {
             val written = session.channel.write(ByteBuffer.wrap(payload))
-            stats.recordSent(written)
+            packetProcessor.recordSent(written)
         } catch (e: IOException) {
             Log.e(TAG, "[$instanceId] Error writing UDP to network", e)
             udpSessions.remove(sessionKey)
@@ -586,7 +577,7 @@ class LocalVpnConnection(
                         val channel = session.channel
                         if (channel != null && channel.isConnected) {
                             val written = channel.write(ByteBuffer.wrap(payload))
-                            if (written > 0) stats.recordSent(written)
+                            if (written > 0) packetProcessor.recordSent(written)
                             session.theirSequenceNum = (seqNum + payloadSize) and 0xFFFFFFFFL
                             
                             // Process reassembled packets from buffer
@@ -599,7 +590,7 @@ class LocalVpnConnection(
                                         val offset = (session.theirSequenceNum.toInt() - nextSeq.toInt())
                                         val actualPayload = if (offset > 0) bufferedPayload!!.sliceArray(offset until bufferedPayload.size) else bufferedPayload!!
                                         val reassembledWritten = channel.write(ByteBuffer.wrap(actualPayload))
-                                        if (reassembledWritten > 0) stats.recordSent(reassembledWritten)
+                                        if (reassembledWritten > 0) packetProcessor.recordSent(reassembledWritten)
                                         session.theirSequenceNum = (session.theirSequenceNum + actualPayload.size) and 0xFFFFFFFFL
                                     }
                                 } else {
@@ -647,7 +638,7 @@ class LocalVpnConnection(
             if (read > 0) {
                 buffer.flip()
                 val totalDataSize = buffer.remaining()
-                stats.recordReceived(totalDataSize)
+                packetProcessor.recordReceived(totalDataSize)
                 
                 synchronized(session) {
                     while (buffer.hasRemaining()) {
@@ -704,7 +695,7 @@ class LocalVpnConnection(
 
         packet.putShort(36, calculateTcpChecksum(packet.array(), destAddr, srcAddr, 20))
 
-        inboundDelayManager.addPacket(packet.array(), totalSize)
+        packetProcessor.processInboundPacket(packet.array(), totalSize)
     }
 
     private fun sendTcpControlPacket(session: TcpSession, flags: Int, seq: Long, ack: Long, payload: ByteBuffer?) {
@@ -743,7 +734,7 @@ class LocalVpnConnection(
 
         packet.putShort(36, calculateTcpChecksum(packet.array(), session.destAddress, session.srcAddress, 20 + payloadSize))
 
-        inboundDelayManager.addPacket(packet.array(), totalSize)
+        packetProcessor.processInboundPacket(packet.array(), totalSize)
     }
 
     private fun calculateTcpChecksum(packet: ByteArray, srcAddr: InetAddress, destAddr: InetAddress, tcpLength: Int): Short {
@@ -813,7 +804,7 @@ class LocalVpnConnection(
 
         packet.putShort(26, calculateUdpChecksum(packet.array(), session.destAddress, session.srcAddress, 8 + payloadSize))
 
-        inboundDelayManager.addPacket(packet.array(), totalSize)
+        packetProcessor.processInboundPacket(packet.array(), totalSize)
     }
 
     private fun closeTcpSession(session: TcpSession, key: String) {

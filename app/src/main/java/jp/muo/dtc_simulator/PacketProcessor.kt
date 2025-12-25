@@ -1,135 +1,169 @@
 package jp.muo.dtc_simulator
 
-import android.os.ParcelFileDescriptor
 import android.util.Log
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.io.IOException
-import java.nio.ByteBuffer
 import kotlin.concurrent.Volatile
 
 /**
- * PacketProcessor - Phase 1 Implementation
+ * PacketProcessor - Centralized packet processing pipeline
  *
- * VPNインターフェースからパケットを読み取り、処理するクラス。
- * Phase 1では単純なパケット転送を実装。
- * Phase 2で遅延やパケットロスのシミュレーション機能を追加予定。
+ * 全てのVPN接続タイプ（ServerVPN, LocalVPN）で共通のパケット処理を提供。
+ * 以下の機能を統一的に管理:
+ * - レイテンシーシミュレーション (delay)
+ * - 帯域幅制限 (bandwidth limiting) - 今後実装
+ * - パケットロス (packet loss) - 今後実装
  */
-class PacketProcessor
-/**
- * コンストラクタ
- *
- * @param vpnInterface VPNインターフェースのファイルディスクリプタ
- */(private val vpnInterface: ParcelFileDescriptor) : Runnable {
-    @Volatile
-    private var running = true
+class PacketProcessor {
+    companion object {
+        private const val TAG = "PacketProcessor"
+    }
 
-    // Latency managers
+    // Latency managers for outbound (VPN → Network) and inbound (Network → VPN)
     private val outboundDelayManager = PacketDelayManager()
     private val inboundDelayManager = PacketDelayManager()
 
     /**
-     * Update latency settings
+     * VPN traffic statistics
      */
-    fun updateLatency(outboundMs: Int, inboundMs: Int) {
+    val stats: VpnStats = VpnStats()
+
+    // Configuration parameters
+    @Volatile
+    private var outboundLatencyMs: Int = 0
+
+    @Volatile
+    private var inboundLatencyMs: Int = 0
+
+    @Volatile
+    private var bandwidthBytesPerSecond: Long = 0 // 0 = unlimited (not yet implemented)
+
+    @Volatile
+    private var packetLossRate: Float = 0f // 0.0 - 1.0 (not yet implemented)
+
+    /**
+     * Update latency settings for outbound and inbound directions
+     * @param outboundMs Latency in milliseconds for outbound packets (VPN → Network)
+     * @param inboundMs Latency in milliseconds for inbound packets (Network → VPN)
+     */
+    fun setLatency(outboundMs: Int, inboundMs: Int) {
+        this.outboundLatencyMs = outboundMs
+        this.inboundLatencyMs = inboundMs
         outboundDelayManager.setLatency(outboundMs)
         inboundDelayManager.setLatency(inboundMs)
+        Log.d(TAG, "Latency updated: outbound=${outboundMs}ms, inbound=${inboundMs}ms")
     }
 
     /**
-     * パケット処理メインループ
-     * VPNインターフェースからパケットを読み取り、処理して送信する。
+     * Set bandwidth limit (bytes per second)
+     * @param bytesPerSecond Maximum throughput in bytes/sec. 0 = unlimited
+     * TODO: Phase 2 - Implement bandwidth throttling
      */
-    override fun run() {
-        Log.i(TAG, "PacketProcessor started")
-
-        var `in`: FileInputStream? = null
-        var out: FileOutputStream? = null
-
-        try {
-            // VPNインターフェースの入出力ストリームを取得
-            `in` = FileInputStream(vpnInterface.fileDescriptor)
-            out = FileOutputStream(vpnInterface.fileDescriptor)
-
-            // Delayed writer thread
-            val writerThread = Thread({
-                try {
-                    while (running) {
-                        // In this simple processor, we just use one manager
-                        // because we don't know the direction easily without parsing IP headers.
-                        // For simplicity, let's treat everything as outbound for now in this class.
-                        val data = outboundDelayManager.pollReadyPacket()
-                        if (data != null) {
-                            out.write(data)
-                        } else {
-                            Thread.sleep(outboundDelayManager.getTimeToNextReady().coerceIn(1, 100))
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (running) Log.e(TAG, "Writer thread error", e)
-                }
-            }, "PacketProcessorWriter")
-            writerThread.start()
-
-            // パケット用バッファを確保
-            val packet = ByteBuffer.allocate(MTU)
-
-            // メインループ
-            while (running) {
-                // VPNインターフェースからパケット読み取り
-                val length = `in`.read(packet.array())
-
-                if (length > 0) {
-                    // パケット処理 (Add to delay manager)
-                    outboundDelayManager.addPacket(packet.array(), length)
-                    packet.clear()
-                } else if (length < 0) {
-                    // ストリーム終了
-                    Log.w(TAG, "End of stream reached")
-                    break
-                }
-            }
-        } catch (e: IOException) {
-            if (running) Log.e(TAG, "Packet processing error", e)
-        } finally {
-            // リソースのクリーンアップ
-            closeStreams(`in`, out)
-            Log.i(TAG, "PacketProcessor stopped")
-        }
+    fun setBandwidth(bytesPerSecond: Long) {
+        this.bandwidthBytesPerSecond = bytesPerSecond
+        Log.d(TAG, "Bandwidth limit set to: $bytesPerSecond bytes/sec (not yet enforced)")
     }
 
     /**
-     * パケット処理を停止する
+     * Set packet loss rate
+     * @param rate Packet loss probability (0.0 = no loss, 1.0 = drop all)
+     * TODO: Phase 2 - Implement packet loss simulation
      */
-    fun stop() {
-        Log.i(TAG, "Stopping PacketProcessor")
-        running = false
+    fun setPacketLossRate(rate: Float) {
+        this.packetLossRate = rate.coerceIn(0f, 1f)
+        Log.d(TAG, "Packet loss rate set to: ${this.packetLossRate} (not yet enforced)")
     }
 
     /**
-     * ストリームをクローズする
+     * Process an outbound packet (VPN → Network direction)
+     * Applies latency simulation and queues the packet for delayed transmission
      *
-     * @param in 入力ストリーム
-     * @param out 出力ストリーム
+     * @param data Packet data array
+     * @param length Actual length of the packet
      */
-    private fun closeStreams(`in`: FileInputStream?, out: FileOutputStream?) {
-        try {
-            `in`?.close()
-        } catch (e: IOException) {
-            Log.e(TAG, "Error closing input stream", e)
-        }
+    fun processOutboundPacket(data: ByteArray, length: Int) {
+        // TODO: Phase 2 - Apply packet loss here
+        // if (shouldDropPacket()) return
 
-        try {
-            out?.close()
-        } catch (e: IOException) {
-            Log.e(TAG, "Error closing output stream", e)
-        }
+        outboundDelayManager.addPacket(data, length)
     }
 
-    companion object {
-        private const val TAG = "PacketProcessor"
+    /**
+     * Process an inbound packet (Network → VPN direction)
+     * Applies latency simulation and queues the packet for delayed transmission
+     *
+     * @param data Packet data array
+     * @param length Actual length of the packet
+     */
+    fun processInboundPacket(data: ByteArray, length: Int) {
+        // TODO: Phase 2 - Apply packet loss here
+        // if (shouldDropPacket()) return
 
-        // MTU設定 (Maximum Transmission Unit)
-        private const val MTU = 1500
+        inboundDelayManager.addPacket(data, length)
     }
+
+    /**
+     * Poll for the next ready outbound packet
+     * Blocks for up to timeoutMs waiting for a packet to become ready
+     *
+     * @param timeoutMs Maximum time to wait in milliseconds
+     * @return Packet data, or null if no packet is ready within timeout
+     */
+    fun pollReadyOutboundPacket(timeoutMs: Long): ByteArray? {
+        return outboundDelayManager.pollReadyPacketBlocking(timeoutMs)
+    }
+
+    /**
+     * Poll for the next ready inbound packet
+     * Blocks for up to timeoutMs waiting for a packet to become ready
+     *
+     * @param timeoutMs Maximum time to wait in milliseconds
+     * @return Packet data, or null if no packet is ready within timeout
+     */
+    fun pollReadyInboundPacket(timeoutMs: Long): ByteArray? {
+        return inboundDelayManager.pollReadyPacketBlocking(timeoutMs)
+    }
+
+    /**
+     * Update buffer statistics
+     */
+    fun updateBufferStats() {
+        stats.updateBufferStats(outboundDelayManager.queueSize, inboundDelayManager.queueSize)
+    }
+
+    /**
+     * Get current outbound queue size
+     */
+    val outboundQueueSize: Int
+        get() = outboundDelayManager.queueSize
+
+    /**
+     * Get current inbound queue size
+     */
+    val inboundQueueSize: Int
+        get() = inboundDelayManager.queueSize
+
+    /**
+     * Record sent bytes (outbound traffic)
+     */
+    fun recordSent(bytes: Int) {
+        stats.recordSent(bytes)
+    }
+
+    /**
+     * Record received bytes (inbound traffic)
+     */
+    fun recordReceived(bytes: Int) {
+        stats.recordReceived(bytes)
+    }
+
+    // TODO: Phase 2 - Implement packet loss logic
+    // private fun shouldDropPacket(): Boolean {
+    //     return if (packetLossRate > 0f) {
+    //         Random.nextFloat() < packetLossRate
+    //     } else {
+    //         false
+    //     }
+    // }
+
+    // TODO: Phase 2 - Implement bandwidth limiting
+    // This would require a token bucket or similar rate limiting algorithm
 }

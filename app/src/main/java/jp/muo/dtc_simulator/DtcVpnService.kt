@@ -32,7 +32,8 @@ class DtcVpnService : VpnService() {
         var thread: Thread?,
         var parcelFileDescriptor: ParcelFileDescriptor,
         var serverVpnConnection: ServerVpnConnection?,
-        var localVpnConnection: LocalVpnConnection? = null
+        var localVpnConnection: LocalVpnConnection? = null,
+        var packetProcessor: PacketProcessor
     )
 
     private val mConnectingThread = AtomicReference<Thread?>()
@@ -160,13 +161,13 @@ class DtcVpnService : VpnService() {
     fun updateLatency(outboundMs: Int, inboundMs: Int) {
         this.outboundLatencyMs = outboundMs
         this.inboundLatencyMs = inboundMs
-        
+
         Log.i(TAG, "Updating latency: outbound=$outboundMs ms, inbound=$inboundMs ms")
-        
+
         val conn = mConnection.get()
         if (conn != null) {
-            conn.serverVpnConnection?.updateLatency(outboundMs, inboundMs)
-            conn.localVpnConnection?.updateLatency(outboundMs, inboundMs)
+            // Update via centralized PacketProcessor
+            conn.packetProcessor.setLatency(outboundMs, inboundMs)
         }
     }
 
@@ -206,16 +207,20 @@ class DtcVpnService : VpnService() {
 
                 Log.i(TAG, "Connecting to server: $serverAddress:$serverPort")
 
+                // Create centralized PacketProcessor
+                val packetProcessor = PacketProcessor()
+                packetProcessor.setLatency(outboundLatencyMs, inboundLatencyMs)
+
                 val connection = ServerVpnConnection(
                     this,
                     serverAddress,
                     serverPort,
                     sharedSecret.toByteArray(),
-                    allowedPackages
+                    allowedPackages,
+                    packetProcessor
                 )
-                connection.updateLatency(outboundLatencyMs, inboundLatencyMs)
 
-                startServerConnection(connection)
+                startServerConnection(connection, packetProcessor)
             }
             MainActivity.VPN_MODE_LOCAL -> {
                 Log.i(TAG, "Starting local VPN connection")
@@ -228,7 +233,7 @@ class DtcVpnService : VpnService() {
         }
     }
 
-    private fun startServerConnection(connection: ServerVpnConnection) {
+    private fun startServerConnection(connection: ServerVpnConnection, packetProcessor: PacketProcessor) {
         val thread = Thread(connection, "ServerVpnConnectionThread")
         setConnectingThread(thread)
 
@@ -239,7 +244,7 @@ class DtcVpnService : VpnService() {
                     Log.i(TAG, "VPN connection established: thread=${thread.id}")
                     if (mConnectingThread.get() === thread) {
                         mConnectingThread.set(null)
-                        setConnection(Connection(thread, tunInterface!!, connection, null))
+                        setConnection(Connection(thread, tunInterface!!, connection, null, packetProcessor))
                     } else {
                         Log.w(TAG, "Outdated thread established connection, closing")
                         try {
@@ -298,12 +303,15 @@ class DtcVpnService : VpnService() {
             return
         }
 
-        val connection = LocalVpnConnection(this, vpnInterface)
-        connection.updateLatency(outboundLatencyMs, inboundLatencyMs)
+        // Create centralized PacketProcessor
+        val packetProcessor = PacketProcessor()
+        packetProcessor.setLatency(outboundLatencyMs, inboundLatencyMs)
+
+        val connection = LocalVpnConnection(this, vpnInterface, packetProcessor)
         val thread = Thread(connection, "LocalVpnConnectionThread")
 
         setConnectingThread(null)
-        setConnection(Connection(thread, vpnInterface, null, connection))
+        setConnection(Connection(thread, vpnInterface, null, connection, packetProcessor))
 
         thread.start()
         Log.i(TAG, "Local VPN connection started")
@@ -422,7 +430,7 @@ class DtcVpnService : VpnService() {
         get() {
             val conn = mConnection.get()
             if (conn != null) {
-                return conn.serverVpnConnection?.stats ?: conn.localVpnConnection?.stats
+                return conn.packetProcessor.stats
             }
             return null
         }

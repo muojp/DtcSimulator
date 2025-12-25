@@ -26,7 +26,8 @@ class ServerVpnConnection(
     private val mService: VpnService,
     private val mServerName: String, private val mServerPort: Int,
     private val mSharedSecret: ByteArray,
-    private val mAllowedPackages: MutableSet<String>
+    private val mAllowedPackages: MutableSet<String>,
+    private val packetProcessor: PacketProcessor
 ) : Runnable {
     val instanceId = System.currentTimeMillis() % 10000
 
@@ -47,12 +48,6 @@ class ServerVpnConnection(
     private var mTunnel: DatagramChannel? = null
     private var mSelector: Selector? = null
 
-    // Latency managers
-    private val outboundDelayManager = PacketDelayManager()
-    private val inboundDelayManager = PacketDelayManager()
-
-    val stats: VpnStats = VpnStats()
-
     fun setConfigureIntent(intent: PendingIntent) {
         mConfigureIntent = intent
     }
@@ -66,9 +61,8 @@ class ServerVpnConnection(
     }
 
     fun updateLatency(outboundMs: Int, inboundMs: Int) {
-        outboundDelayManager.setLatency(outboundMs)
-        inboundDelayManager.setLatency(inboundMs)
-        Log.d(TAG, "Latency updated in connection: out=$outboundMs, in=$inboundMs")
+        packetProcessor.setLatency(outboundMs, inboundMs)
+        Log.d(TAG, "[$instanceId] Latency updated via PacketProcessor: out=$outboundMs, in=$inboundMs")
     }
 
     fun stop() {
@@ -164,7 +158,7 @@ class ServerVpnConnection(
                                         while (true) {
                                             val length = `in`.read(readerPacket.array())
                                             if (length > 0) {
-                                                outboundDelayManager.addPacket(readerPacket.array(), length)
+                                                packetProcessor.processOutboundPacket(readerPacket.array(), length)
                                             } else if (length < 0) {
                                                 return 0
                                             } else break
@@ -185,13 +179,13 @@ class ServerVpnConnection(
                         val outgoingWriterThread = Thread({
                             try {
                                 while (mRunning) {
-                                    val data = outboundDelayManager.pollReadyPacketBlocking(100)
+                                    val data = packetProcessor.pollReadyOutboundPacket(100)
                                     if (data != null) {
                                         val tunnelRef = mTunnel
                                         if (tunnelRef != null && tunnelRef.isConnected) {
                                             val buffer = ByteBuffer.wrap(data)
                                             val sent = tunnelRef.write(buffer)
-                                            if (sent > 0) stats.recordSent(sent)
+                                            if (sent > 0) packetProcessor.recordSent(sent)
                                         }
                                     }
                                 }
@@ -202,7 +196,7 @@ class ServerVpnConnection(
                         val incomingWriterThread = Thread({
                             try {
                                 while (mRunning) {
-                                    val data = inboundDelayManager.pollReadyPacketBlocking(100)
+                                    val data = packetProcessor.pollReadyInboundPacket(100)
                                     if (data != null) {
                                         out.write(data)
                                         out.flush()
@@ -240,8 +234,8 @@ class ServerVpnConnection(
                                     if (length > 0) {
                                         lastReceiveTime = timeNow
                                         if (packet.get(0).toInt() != 0) {
-                                            stats.recordReceived(length)
-                                            inboundDelayManager.addPacket(packet.array(), length)
+                                            packetProcessor.recordReceived(length)
+                                            packetProcessor.processInboundPacket(packet.array(), length)
                                         }
                                     }
                                 }
@@ -252,7 +246,7 @@ class ServerVpnConnection(
                             }
 
                             if (timeNow - lastStatsUpdate > 500) {
-                                stats.updateBufferStats(outboundDelayManager.queueSize, inboundDelayManager.queueSize)
+                                packetProcessor.updateBufferStats()
                                 lastStatsUpdate = timeNow
                             }
 
