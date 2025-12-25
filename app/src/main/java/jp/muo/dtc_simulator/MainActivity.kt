@@ -72,6 +72,18 @@ class MainActivity : AppCompatActivity() {
     // Statistics Update Timer
     private var statsHandler: Handler? = null
     private var statsUpdateRunnable: Runnable? = null
+
+    private val vpnStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action == DtcVpnService.ACTION_VPN_STOPPED) {
+                Log.d(TAG, "Received ACTION_VPN_STOPPED broadcast")
+                isVpnRunning = false
+                updateVpnButton()
+                stopStatsUpdates()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -89,6 +101,15 @@ class MainActivity : AppCompatActivity() {
         setupStatsTimer()
         updateUdpEchoDescription()
         checkNotificationPermission()
+
+        // Register VPN state receiver
+        Log.d(TAG, "onCreate: Registering ACTION_VPN_STOPPED receiver")
+        val filter = android.content.IntentFilter(DtcVpnService.ACTION_VPN_STOPPED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(vpnStateReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(vpnStateReceiver, filter)
+        }
 
         // Auto-scan on startup (background thread)
         Thread {
@@ -318,6 +339,7 @@ class MainActivity : AppCompatActivity() {
      * Toggle VPN on/off
      */
     private fun toggleVpn() {
+        Log.d(TAG, "toggleVpn: isVpnRunning=$isVpnRunning")
         if (isVpnRunning) {
             stopVpn()
         } else {
@@ -330,12 +352,15 @@ class MainActivity : AppCompatActivity() {
      * Requests VPN permission if not already granted
      */
     private fun startVpn() {
+        Log.d(TAG, "startVpn called")
         val intent = VpnService.prepare(this)
         if (intent != null) {
             // VPN permission is required
+            Log.i(TAG, "VPN permission required, starting activity for result")
             startActivityForResult(intent, VPN_REQUEST_CODE)
         } else {
             // VPN permission already granted
+            Log.i(TAG, "VPN permission already granted, starting service")
             startVpnService()
         }
     }
@@ -344,8 +369,16 @@ class MainActivity : AppCompatActivity() {
      * Stop VPN service
      */
     private fun stopVpn() {
+        Log.d(TAG, "stopVpn: sending stop signal to service")
+        val stopIntent = Intent(this, DtcVpnService::class.java).apply {
+            action = DtcVpnService.ACTION_STOP_VPN
+        }
+        startService(stopIntent)
+        
         val serviceIntent = Intent(this, DtcVpnService::class.java)
-        stopService(serviceIntent)
+        val stopped = stopService(serviceIntent)
+        Log.d(TAG, "stopService returned: $stopped")
+        
         isVpnRunning = false
         updateVpnButton()
         stopStatsUpdates()
@@ -648,6 +681,12 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         stopStatsUpdates()
+        try {
+            unregisterReceiver(vpnStateReceiver)
+            Log.d(TAG, "onDestroy: Unregistered vpnStateReceiver")
+        } catch (e: Exception) {
+            Log.w(TAG, "onDestroy: Error unregistering receiver", e)
+        }
     }
 
     companion object {

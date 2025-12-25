@@ -28,10 +28,12 @@ class LocalVpnConnection(
     private val vpnService: VpnService,
     private val vpnInterface: ParcelFileDescriptor
 ) : Runnable {
+    val instanceId = System.currentTimeMillis() % 10000
+
     @Volatile
     private var running = true
 
-    private var selector: Selector? = null
+    private var mSelector: Selector? = null
 
     // Latency managers
     private val outboundDelayManager = PacketDelayManager()
@@ -48,7 +50,7 @@ class LocalVpnConnection(
     fun updateLatency(outboundMs: Int, inboundMs: Int) {
         outboundDelayManager.setLatency(outboundMs)
         inboundDelayManager.setLatency(inboundMs)
-        Log.d(TAG, "Latency updated in LocalVpnConnection: out=$outboundMs, in=$inboundMs")
+        Log.d(TAG, "[$instanceId] Latency updated in LocalVpnConnection: out=$outboundMs, in=$inboundMs")
     }
 
     // Session management
@@ -93,22 +95,25 @@ class LocalVpnConnection(
     private val pendingRegistrations = ConcurrentLinkedQueue<Any>() // UdpSession or TcpSession
 
     override fun run() {
-        Log.i(TAG, "LocalVpnConnection starting")
+        Log.i(TAG, "[$instanceId] LocalVpnConnection starting")
 
         try {
-            selector = Selector.open()
+            mSelector = Selector.open()
             val vpnFd = vpnInterface.fileDescriptor
             val inputStream = FileInputStream(vpnFd)
             val outputStream = FileOutputStream(vpnFd)
 
             // 1. Event-driven outgoing reader (VPN -> Network)
-            val outgoingHandlerThread = HandlerThread("LocalVpnOutgoingReader").apply { start() }
+            val outgoingHandlerThread = HandlerThread("LocalVpnOutgoingReader-$instanceId").apply { start() }
             val outgoingMessageQueue = outgoingHandlerThread.looper.queue
 
             val readerPacket = ByteBuffer.allocate(MAX_PACKET_SIZE)
             val fdListener = object : MessageQueue.OnFileDescriptorEventListener {
                 override fun onFileDescriptorEvents(fd: java.io.FileDescriptor, events: Int): Int {
-                    if (!running) return 0
+                    if (!running) {
+                        Log.d(TAG, "[$instanceId] fdListener: running is false, stopping")
+                        return 0
+                    }
 
                     if (events and MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT != 0) {
                         try {
@@ -118,7 +123,7 @@ class LocalVpnConnection(
                                 if (length > 0) {
                                     outboundDelayManager.addPacket(readerPacket.array(), length)
                                 } else if (length < 0) {
-                                    Log.i(TAG, "VPN interface closed")
+                                    Log.i(TAG, "[$instanceId] VPN interface closed (length < 0)")
                                     return 0
                                 } else {
                                     // No more data available
@@ -128,7 +133,7 @@ class LocalVpnConnection(
                             // Continue monitoring
                             return MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT
                         } catch (e: Exception) {
-                            if (running) Log.e(TAG, "Error in outgoing reader", e)
+                            if (running) Log.e(TAG, "[$instanceId] Error in outgoing reader", e)
                             return 0
                         }
                     }
@@ -141,10 +146,11 @@ class LocalVpnConnection(
                 MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT,
                 fdListener
             )
-            Log.d(TAG, "Event-driven VPN reader registered")
+            Log.d(TAG, "[$instanceId] Event-driven VPN reader registered")
 
             val outgoingWriterThread = Thread({
                 try {
+                    Log.d(TAG, "[$instanceId] Outgoing writer thread starting")
                     while (running) {
                         val data = outboundDelayManager.pollReadyPacketBlocking(100)
                         if (data != null) {
@@ -153,14 +159,17 @@ class LocalVpnConnection(
                         stats.updateBufferStats(outboundDelayManager.queueSize, inboundDelayManager.queueSize)
                     }
                 } catch (e: Exception) {
-                    if (running) Log.e(TAG, "Error in outgoing writer thread", e)
+                    if (running) Log.e(TAG, "[$instanceId] Error in outgoing writer thread", e)
+                } finally {
+                    Log.d(TAG, "[$instanceId] Outgoing writer thread exiting")
                 }
-            }, "LocalVpnOutgoingWriter")
+            }, "LocalVpnOutgoingWriter-$instanceId")
             outgoingWriterThread.start()
 
             // 2. Incoming loop (Network -> VPN)
             val incomingWriterThread = Thread({
                 try {
+                    Log.d(TAG, "[$instanceId] Incoming writer thread starting")
                     while (running) {
                         val data = inboundDelayManager.pollReadyPacketBlocking(100)
                         if (data != null) {
@@ -169,35 +178,43 @@ class LocalVpnConnection(
                         stats.updateBufferStats(outboundDelayManager.queueSize, inboundDelayManager.queueSize)
                     }
                 } catch (e: Exception) {
-                    if (running) Log.e(TAG, "Error in incoming writer thread", e)
+                    if (running) Log.e(TAG, "[$instanceId] Error in incoming writer thread", e)
+                } finally {
+                    Log.d(TAG, "[$instanceId] Incoming writer thread exiting")
                 }
-            }, "LocalVpnIncomingWriter")
+            }, "LocalVpnIncomingWriter-$instanceId")
             incomingWriterThread.start()
 
             var lastCleanupTime = System.currentTimeMillis()
+            var lastAliveLog = System.currentTimeMillis()
             while (running) {
                 // Process pending registrations
                 while (pendingRegistrations.isNotEmpty()) {
                     val session = pendingRegistrations.poll()
                     if (session is UdpSession && session.channel.isOpen) {
-                        session.channel.register(selector, SelectionKey.OP_READ, session)
+                        session.channel.register(mSelector, SelectionKey.OP_READ, session)
                     } else if (session is TcpSession && session.channel?.isOpen == true) {
-                        session.channel?.register(selector, SelectionKey.OP_READ or SelectionKey.OP_CONNECT, session)
+                        session.channel?.register(mSelector, SelectionKey.OP_READ or SelectionKey.OP_CONNECT, session)
                     }
                 }
 
                 // Wait for data with timeout
                 val selected = try {
-                    selector!!.select(500)
+                    mSelector!!.select(500)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Selector error", e)
+                    Log.e(TAG, "[$instanceId] Selector error", e)
                     break
                 }
 
                 val now = System.currentTimeMillis()
+                
+                if (now - lastAliveLog > 30000) {
+                    Log.i(TAG, "[$instanceId] Selector loop alive, selected=$selected, inQ=${inboundDelayManager.queueSize}, outQ=${outboundDelayManager.queueSize}")
+                    lastAliveLog = now
+                }
 
                 if (selected > 0) {
-                    val keys = selector!!.selectedKeys().iterator()
+                    val keys = mSelector!!.selectedKeys().iterator()
                     while (keys.hasNext()) {
                         val key = keys.next()
                         keys.remove()
@@ -224,12 +241,12 @@ class LocalVpnConnection(
                 outgoingMessageQueue.removeOnFileDescriptorEventListener(vpnFd)
                 outgoingHandlerThread.quitSafely()
                 outgoingHandlerThread.join(1000)
-                Log.d(TAG, "Event-driven VPN reader cleaned up")
+                Log.d(TAG, "[$instanceId] Event-driven VPN reader cleaned up")
             } catch (e: Exception) {
-                Log.w(TAG, "Error cleaning up event listener", e)
+                Log.w(TAG, "[$instanceId] Error cleaning up event listener", e)
             }
         } catch (e: Exception) {
-            if (running) Log.e(TAG, "Error in forwarding loop", e)
+            if (running) Log.e(TAG, "[$instanceId] Error in forwarding loop", e)
         } finally {
             cleanup()
         }
@@ -248,7 +265,7 @@ class LocalVpnConnection(
                     sendResponseToVpn(attachment, responseBuffer)
                 }
             } catch (e: IOException) {
-                Log.e(TAG, "Error receiving UDP from network", e)
+                Log.e(TAG, "[$instanceId] Error receiving UDP from network", e)
                 key.cancel()
                 channel.close()
                 udpSessions.values.remove(attachment)
@@ -263,7 +280,7 @@ class LocalVpnConnection(
         val channel = key.channel() as SocketChannel
         try {
             if (channel.finishConnect()) {
-                Log.d(TAG, "TCP connected to network: ${session.destAddress}:${session.destPort}")
+                Log.d(TAG, "[$instanceId] TCP connected to network: ${session.destAddress}:${session.destPort}")
                 session.state = TcpState.ESTABLISHED
                 key.interestOps(SelectionKey.OP_READ)
                 
@@ -277,7 +294,7 @@ class LocalVpnConnection(
                 }
             }
         } catch (e: IOException) {
-            Log.e(TAG, "TCP connection failed to ${session.destAddress}:${session.destPort}", e)
+            Log.e(TAG, "[$instanceId] TCP connection failed to ${session.destAddress}:${session.destPort}", e)
             key.cancel()
             channel.close()
             tcpSessions.values.remove(session)
@@ -285,15 +302,20 @@ class LocalVpnConnection(
     }
 
     private fun forwardToNetwork(packet: ByteBuffer) {
+        if (!running) {
+            Log.d(TAG, "[$instanceId] forwardToNetwork called but running is false")
+            return
+        }
+
         if (packet.limit() < 20) {
-            Log.w(TAG, "Discarding too short packet: ${packet.limit()} bytes")
+            Log.w(TAG, "[$instanceId] Discarding too short packet: ${packet.limit()} bytes")
             return
         }
 
         val versionAndIHL = packet.get(0).toInt() and 0xFF
         val version = versionAndIHL shr 4
         if (version != 4) {
-            Log.w(TAG, "Discarding non-IPv4 packet: version=$version")
+            Log.w(TAG, "[$instanceId] Discarding non-IPv4 packet: version=$version")
             return
         }
 
@@ -307,11 +329,13 @@ class LocalVpnConnection(
         }
 
         val protocol = packet.get(9).toInt() and 0xFF
+        Log.v(TAG, "[$instanceId] forwardToNetwork: protocol=$protocol from $srcAddress")
+        
         when (protocol) {
             17 -> forwardUdpPacket(packet)
             6 -> forwardTcpPacket(packet)
             1 -> forwardIcmpPacket(packet)
-            else -> Log.d(TAG, "Unsupported protocol: $protocol (discarding)")
+            else -> Log.d(TAG, "[$instanceId] Unsupported protocol: $protocol (discarding)")
         }
     }
 
@@ -330,11 +354,11 @@ class LocalVpnConnection(
         val type = packet.get().toInt() and 0xFF
         
         if (type == 8) { // Echo Request
-            Log.d(TAG, "ICMP Echo Request to $destAddress")
+            Log.d(TAG, "[$instanceId] ICMP Echo Request to $destAddress")
             // とりあえずローカルでEcho Replyを返す
             sendIcmpEchoReply(packet)
         } else {
-            Log.d(TAG, "Unsupported ICMP type: $type (discarding)")
+            Log.d(TAG, "[$instanceId] Unsupported ICMP type: $type (discarding)")
         }
     }
 
@@ -361,7 +385,7 @@ class LocalVpnConnection(
         reply.putShort(22, calculateChecksum(reply.array(), 20, size - 20))
         
         inboundDelayManager.addPacket(reply.array(), size)
-        Log.d(TAG, "Added ICMP Echo Reply to delay manager")
+        Log.d(TAG, "[$instanceId] Added ICMP Echo Reply to delay manager")
     }
 
     private fun forwardUdpPacket(packet: ByteBuffer) {
@@ -385,7 +409,7 @@ class LocalVpnConnection(
         val destPort = packet.getShort().toInt() and 0xFFFF
 
         if (destPort == 53 || srcPort == 53) {
-            Log.d(TAG, "DNS Query via UDP: $srcAddress:$srcPort -> $destAddress:$destPort")
+            Log.d(TAG, "[$instanceId] DNS Query via UDP: $srcAddress:$srcPort -> $destAddress:$destPort")
         }
 
         // Payload
@@ -403,10 +427,10 @@ class LocalVpnConnection(
         var session = udpSessions[sessionKey]
 
         if (session == null || !session.channel.isOpen) {
-            Log.d(TAG, "Creating new UDP session for $sessionKey")
+            Log.d(TAG, "[$instanceId] Creating new UDP session for $sessionKey")
             val channel = DatagramChannel.open()
             if (!vpnService.protect(channel.socket())) {
-                Log.e(TAG, "Failed to protect UDP socket for $sessionKey")
+                Log.e(TAG, "[$instanceId] Failed to protect UDP socket for $sessionKey")
                 channel.close()
                 return
             }
@@ -416,7 +440,7 @@ class LocalVpnConnection(
             session = UdpSession(srcAddress, srcPort, destAddress, destPort, channel)
             udpSessions[sessionKey] = session
             pendingRegistrations.add(session)
-            selector?.wakeup()
+            mSelector?.wakeup()
         }
 
         session.lastActive = System.currentTimeMillis()
@@ -424,7 +448,7 @@ class LocalVpnConnection(
             val written = session.channel.write(ByteBuffer.wrap(payload))
             stats.recordSent(written)
         } catch (e: IOException) {
-            Log.e(TAG, "Error writing UDP to network", e)
+            Log.e(TAG, "[$instanceId] Error writing UDP to network", e)
             udpSessions.remove(sessionKey)
             session.channel.close()
         }
@@ -468,7 +492,7 @@ class LocalVpnConnection(
             if (isSyn) {
                 // Reject port 853 if we want to skip Private DNS in Local mode
                 if (destPort == 853) {
-                    Log.d(TAG, "TCP SYN to 853 (Private DNS) received. Skipping to force fallback.")
+                    Log.d(TAG, "[$instanceId] TCP SYN to 853 (Private DNS) received. Skipping to force fallback.")
                     return
                 }
 
@@ -481,7 +505,7 @@ class LocalVpnConnection(
                 try {
                     val channel = SocketChannel.open()
                     if (!vpnService.protect(channel.socket())) {
-                        Log.e(TAG, "Failed to protect TCP socket for $sessionKey")
+                        Log.e(TAG, "[$instanceId] Failed to protect TCP socket for $sessionKey")
                         channel.close()
                         tcpSessions.remove(sessionKey)
                         return
@@ -490,9 +514,9 @@ class LocalVpnConnection(
                     channel.connect(InetSocketAddress(destAddress, destPort))
                     newSession.channel = channel
                     pendingRegistrations.add(newSession)
-                    selector?.wakeup()
+                    mSelector?.wakeup()
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to open TCP channel for $sessionKey", e)
+                    Log.e(TAG, "[$instanceId] Failed to open TCP channel for $sessionKey", e)
                     tcpSessions.remove(sessionKey)
                     return
                 }
@@ -510,7 +534,7 @@ class LocalVpnConnection(
             session.lastActive = System.currentTimeMillis()
 
             if (isRst) {
-                Log.d(TAG, "TCP RST received for $sessionKey")
+                Log.d(TAG, "[$instanceId] TCP RST received for $sessionKey")
                 closeTcpSession(session, sessionKey)
                 return
             }
@@ -540,7 +564,7 @@ class LocalVpnConnection(
                     if (isAfter(seqNum, session.theirSequenceNum)) {
                         val diff = (seqNum.toInt() - session.theirSequenceNum.toInt())
                         if (diff > 65535) {
-                            Log.w(TAG, "TCP packet too far ahead for $sessionKey (seqNum $seqNum, expected ${session.theirSequenceNum}) - discarding")
+                            Log.w(TAG, "[$instanceId] TCP packet too far ahead for $sessionKey (seqNum $seqNum, expected ${session.theirSequenceNum}) - discarding")
                             return
                         }
                         
@@ -593,7 +617,7 @@ class LocalVpnConnection(
                             sendTcpControlPacket(session, 0x10, session.mySequenceNum, session.theirSequenceNum, null)
                         }
                     } catch (e: IOException) {
-                        Log.e(TAG, "TCP write failed for $sessionKey", e)
+                        Log.e(TAG, "[$instanceId] TCP write failed for $sessionKey", e)
                         closeTcpSession(session, sessionKey)
                         return
                     }
@@ -606,7 +630,7 @@ class LocalVpnConnection(
             }
             
             if (isFin) {
-                Log.d(TAG, "TCP FIN received for $sessionKey")
+                Log.d(TAG, "[$instanceId] TCP FIN received for $sessionKey")
                 val finSeq = (seqNum + (if (ipHeaderLength + tcpHeaderLength < packet.limit()) packet.limit() - (ipHeaderLength + tcpHeaderLength) else 0)) and 0xFFFFFFFFL
                 session.theirSequenceNum = (finSeq + 1) and 0xFFFFFFFFL
                 sendTcpControlPacket(session, 0x11, session.mySequenceNum, session.theirSequenceNum, null)
@@ -638,7 +662,7 @@ class LocalVpnConnection(
                     }
                 }
             } else if (read < 0) {
-                Log.d(TAG, "TCP remote closed connection for TCP:${session.srcAddress}:${session.srcPort} -> ${session.destAddress}:${session.destPort}")
+                Log.d(TAG, "[$instanceId] TCP remote closed connection for TCP:${session.srcAddress}:${session.srcPort} -> ${session.destAddress}:${session.destPort}")
                 synchronized(session) {
                     sendTcpControlPacket(session, 0x11, session.mySequenceNum, session.theirSequenceNum, null)
                     session.mySequenceNum = (session.mySequenceNum + 1) and 0xFFFFFFFFL
@@ -819,17 +843,25 @@ class LocalVpnConnection(
     }
 
     fun stop() {
+        Log.i(TAG, "[$instanceId] stop() called, setting running=false")
         running = false
-        selector?.wakeup()
+        mSelector?.wakeup()
     }
 
     private fun cleanup() {
+        Log.i(TAG, "[$instanceId] cleanup() started")
         for (session in udpSessions.values) { try { session.channel.close() } catch (e: IOException) {} }
         for (session in tcpSessions.values) { try { session.channel?.close() } catch (e: IOException) {} }
         udpSessions.clear()
         tcpSessions.clear()
         pendingRegistrations.clear()
-        try { selector?.close() } catch (e: IOException) {}
+        try { 
+            mSelector?.close() 
+            Log.d(TAG, "[$instanceId] Selector closed")
+        } catch (e: IOException) {
+            Log.e(TAG, "[$instanceId] Error closing selector", e)
+        }
+        Log.i(TAG, "[$instanceId] cleanup() finished")
     }
 
     companion object {
