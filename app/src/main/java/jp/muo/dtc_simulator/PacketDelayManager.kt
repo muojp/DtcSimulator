@@ -46,10 +46,28 @@ class PacketDelayManager {
     fun addPacket(data: ByteArray, length: Int) {
         val now = SystemClock.elapsedRealtime()
         val packetData = data.copyOfRange(0, length)
-        
+
         val releaseTime = if (latencyMs <= 0) now else now + latencyMs
         queue.offer(DelayedPacket(packetData, releaseTime))
-        
+
+        synchronized(lock) {
+            lock.notifyAll()
+        }
+    }
+
+    /**
+     * Add a packet with a custom delay (for percentile distribution)
+     * @param data Packet data
+     * @param length Packet length
+     * @param customDelayMs Custom delay in milliseconds for this specific packet
+     */
+    fun addPacketWithCustomDelay(data: ByteArray, length: Int, customDelayMs: Int) {
+        val now = SystemClock.elapsedRealtime()
+        val packetData = data.copyOfRange(0, length)
+
+        val releaseTime = if (customDelayMs <= 0) now else now + customDelayMs
+        queue.offer(DelayedPacket(packetData, releaseTime))
+
         synchronized(lock) {
             lock.notifyAll()
         }

@@ -62,6 +62,10 @@ class MainActivity : AppCompatActivity() {
     private var sliderOutboundLatency: com.google.android.material.slider.Slider? = null
     private var tvInboundLatency: TextView? = null
     private var sliderInboundLatency: com.google.android.material.slider.Slider? = null
+    private var tvPacketLoss: TextView? = null
+    private var sliderPacketLoss: com.google.android.material.slider.Slider? = null
+    private var tvBandwidth: TextView? = null
+    private var sliderBandwidth: com.google.android.material.slider.Slider? = null
 
     // Statistics UI Components
     private var cardStatistics: MaterialCardView? = null
@@ -110,6 +114,7 @@ class MainActivity : AppCompatActivity() {
         setupButtons()
         setupVpnModeListener()
         setupLatencyControls()
+        setupLossAndBandwidthControls()
         setupStatsTimer()
         updateUdpEchoDescription()
         checkNotificationPermission()
@@ -165,6 +170,78 @@ class MainActivity : AppCompatActivity() {
 
         sliderOutboundLatency?.addOnChangeListener(listener)
         sliderInboundLatency?.addOnChangeListener(listener)
+    }
+
+    /**
+     * Setup packet loss and bandwidth controls
+     */
+    private fun setupLossAndBandwidthControls() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+
+        // Load saved values
+        val savedLossPercent = prefs.getFloat(PREF_PACKET_LOSS_PERCENT, 0f)
+        val savedBandwidthPercent = prefs.getFloat(PREF_BANDWIDTH_PERCENT, 0f)
+
+        // Set slider values
+        sliderPacketLoss?.value = savedLossPercent
+        sliderBandwidth?.value = savedBandwidthPercent
+
+        // Update text displays
+        tvPacketLoss?.text = String.format(Locale.US, "%.1f %%", savedLossPercent)
+        tvBandwidth?.text = formatBandwidth(calculateBandwidth(savedBandwidthPercent))
+
+        // Packet Loss listener
+        sliderPacketLoss?.addOnChangeListener { _, value, _ ->
+            tvPacketLoss?.text = String.format(Locale.US, "%.1f %%", value)
+            prefs.edit().putFloat(PREF_PACKET_LOSS_PERCENT, value).apply()
+            updateServiceNetworkParams()
+        }
+
+        // Bandwidth listener
+        sliderBandwidth?.addOnChangeListener { _, value, _ ->
+            val bandwidthKbps = calculateBandwidth(value)
+            tvBandwidth?.text = formatBandwidth(bandwidthKbps)
+            prefs.edit().putFloat(PREF_BANDWIDTH_PERCENT, value).apply()
+            updateServiceNetworkParams()
+        }
+    }
+
+    /**
+     * Calculate bandwidth from slider value (0-100)
+     * Using exponential scale:
+     * 0% -> 0 kbps (unlimited)
+     * 25% -> 128 kbps
+     * 50% -> 1024 kbps (1 Mbps)
+     * 75% -> 8192 kbps (8 Mbps)
+     * 100% -> 65536 kbps (64 Mbps)
+     */
+    private fun calculateBandwidth(percent: Float): Int {
+        if (percent <= 0f) return 0
+        return (128 * Math.pow(2.0, percent / 12.5)).toInt()
+    }
+
+    /**
+     * Format bandwidth to human-readable string
+     */
+    private fun formatBandwidth(kbps: Int): String {
+        if (kbps == 0) return "Unlimited"
+        if (kbps < 1024) return "$kbps kbps"
+        return "${kbps / 1024} Mbps"
+    }
+
+    /**
+     * Update network parameters (loss, bandwidth) in the running VPN service
+     */
+    private fun updateServiceNetworkParams() {
+        val service = DtcVpnService.instance ?: return
+
+        val lossPercent = sliderPacketLoss?.value ?: 0f
+        val bandwidthPercent = sliderBandwidth?.value ?: 0f
+        val bandwidthKbps = calculateBandwidth(bandwidthPercent)
+
+        // TODO: Add methods to DtcVpnService to update these parameters
+        // service.updatePacketLoss(lossPercent)
+        // service.updateBandwidth(bandwidthKbps)
     }
 
     /**
@@ -242,6 +319,10 @@ class MainActivity : AppCompatActivity() {
         sliderOutboundLatency = findViewById(R.id.slider_outbound_latency)
         tvInboundLatency = findViewById(R.id.tv_inbound_latency)
         sliderInboundLatency = findViewById(R.id.slider_inbound_latency)
+        tvPacketLoss = findViewById(R.id.tv_packet_loss)
+        sliderPacketLoss = findViewById(R.id.slider_packet_loss)
+        tvBandwidth = findViewById(R.id.tv_bandwidth)
+        sliderBandwidth = findViewById(R.id.slider_bandwidth)
 
         // Statistics views
         cardStatistics = findViewById(R.id.card_statistics)
@@ -887,5 +968,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_VPN_MODE = "vpn_mode"
         private const val PREF_OUTBOUND_LATENCY_PERCENT = "outbound_latency_percent"
         private const val PREF_INBOUND_LATENCY_PERCENT = "inbound_latency_percent"
+        private const val PREF_PACKET_LOSS_PERCENT = "packet_loss_percent"
+        private const val PREF_BANDWIDTH_PERCENT = "bandwidth_percent"
     }
 }

@@ -172,6 +172,26 @@ class DtcVpnService : VpnService() {
     }
 
     /**
+     * Update network profile for advanced configuration
+     * @param profile NetworkProfile configuration or null to clear
+     */
+    fun updateNetworkProfile(profile: NetworkProfile?) {
+        Log.i(TAG, "Updating network profile: ${if (profile != null) "set" else "cleared"}")
+
+        val conn = mConnection.get()
+        if (conn != null) {
+            if (profile != null) {
+                conn.packetProcessor.setNetworkProfile(profile)
+            } else {
+                // Clear profile by resetting to simple values
+                conn.packetProcessor.setLatency(outboundLatencyMs, inboundLatencyMs)
+                conn.packetProcessor.setPacketLossRate(0f)
+                conn.packetProcessor.setBandwidth(0)
+            }
+        }
+    }
+
+    /**
      * サーバーへの接続を開始
      */
     private fun connect(vpnMode: String, serverAddressPort: String, sharedSecret: String) {

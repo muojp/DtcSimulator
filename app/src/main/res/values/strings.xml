@@ -29,10 +29,23 @@
     <string name="error_server_address_format">Server address must be in format IP:PORT</string>
     <string name="error_server_port_invalid">Port must be between 1 and 65535</string>
 
+    <!-- Network Profile -->
+    <string name="network_profile_title">Network Profile (Advanced)</string>
+    <string name="network_profile_description">Define detailed network simulation parameters using YAML syntax. This overrides basic slider settings.</string>
+    <string name="network_profile_hint">YAML Configuration</string>
+    <string name="network_profile_helper">Example: delay:\n  p50: 145\nloss: 9.0\nbandwidth: 3072</string>
+    <string name="apply_profile">Apply Profile</string>
+    <string name="clear_profile">Clear</string>
+    <string name="profile_applied">Network profile applied successfully</string>
+    <string name="profile_cleared">Network profile cleared</string>
+    <string name="profile_parse_error">Failed to parse profile. Please check YAML syntax.</string>
+
     <!-- Latency Simulation -->
     <string name="latency_simulation_title">Latency Simulation</string>
     <string name="outbound_latency_label">Outbound (Upstream)</string>
     <string name="inbound_latency_label">Inbound (Downstream)</string>
+    <string name="packet_loss_label">Packet Loss Rate</string>
+    <string name="bandwidth_label">Bandwidth Limit</string>
 
     <!-- App Scanning -->
     <string name="app_scanning_title">App Scanning</string>

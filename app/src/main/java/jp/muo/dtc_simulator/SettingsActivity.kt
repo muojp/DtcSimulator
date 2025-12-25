@@ -1,6 +1,7 @@
 package jp.muo.dtc_simulator
 
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.appbar.MaterialToolbar
@@ -13,10 +14,18 @@ import com.google.android.material.textfield.TextInputEditText
  * Server configuration settings screen
  */
 class SettingsActivity : AppCompatActivity() {
+    companion object {
+        private const val TAG = "SettingsActivity"
+        const val PREF_NETWORK_PROFILE = "network_profile"
+    }
+
     private var toolbar: MaterialToolbar? = null
     private var etServerAddress: TextInputEditText? = null
     private var etServerSecret: TextInputEditText? = null
     private var btnSaveSettings: MaterialButton? = null
+    private var etNetworkProfile: TextInputEditText? = null
+    private var btnApplyProfile: MaterialButton? = null
+    private var btnClearProfile: MaterialButton? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,6 +35,7 @@ class SettingsActivity : AppCompatActivity() {
         setupToolbar()
         loadSettings()
         setupSaveButton()
+        setupNetworkProfileButtons()
     }
 
     private fun initializeViews() {
@@ -33,6 +43,9 @@ class SettingsActivity : AppCompatActivity() {
         etServerAddress = findViewById(R.id.et_server_address)
         etServerSecret = findViewById(R.id.et_server_secret)
         btnSaveSettings = findViewById(R.id.btn_save_settings)
+        etNetworkProfile = findViewById(R.id.et_network_profile)
+        btnApplyProfile = findViewById(R.id.btn_apply_profile)
+        btnClearProfile = findViewById(R.id.btn_clear_profile)
     }
 
     private fun setupToolbar() {
@@ -58,6 +71,10 @@ class SettingsActivity : AppCompatActivity() {
 
         etServerAddress?.setText(savedAddress)
         etServerSecret?.setText(savedSecret)
+
+        // Load network profile
+        val savedProfile = prefs.getString(PREF_NETWORK_PROFILE, "") ?: ""
+        etNetworkProfile?.setText(savedProfile)
     }
 
     private fun setupSaveButton() {
@@ -104,5 +121,61 @@ class SettingsActivity : AppCompatActivity() {
 
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         finish()
+    }
+
+    private fun setupNetworkProfileButtons() {
+        btnApplyProfile?.setOnClickListener {
+            applyNetworkProfile()
+        }
+
+        btnClearProfile?.setOnClickListener {
+            clearNetworkProfile()
+        }
+    }
+
+    private fun applyNetworkProfile() {
+        val profileText = etNetworkProfile?.text?.toString()?.trim() ?: ""
+
+        if (profileText.isEmpty()) {
+            Toast.makeText(this, "Profile is empty", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Parse the network profile
+        val profile = NetworkProfileParser.parse(profileText)
+        if (profile == null) {
+            Toast.makeText(this, R.string.profile_parse_error, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        // Save to SharedPreferences
+        val prefs = getSharedPreferences(MainActivity.PREFS_NAME, MODE_PRIVATE)
+        prefs.edit().putString(PREF_NETWORK_PROFILE, profileText).apply()
+
+        // Apply to running VPN service if available
+        val service = DtcVpnService.instance
+        if (service != null && service.isRunning) {
+            service.updateNetworkProfile(profile)
+            Log.i(TAG, "Applied network profile to running service")
+        }
+
+        Toast.makeText(this, R.string.profile_applied, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun clearNetworkProfile() {
+        etNetworkProfile?.setText("")
+
+        // Clear from SharedPreferences
+        val prefs = getSharedPreferences(MainActivity.PREFS_NAME, MODE_PRIVATE)
+        prefs.edit().remove(PREF_NETWORK_PROFILE).apply()
+
+        // Clear from running VPN service if available
+        val service = DtcVpnService.instance
+        if (service != null && service.isRunning) {
+            service.updateNetworkProfile(null)
+            Log.i(TAG, "Cleared network profile from running service")
+        }
+
+        Toast.makeText(this, R.string.profile_cleared, Toast.LENGTH_SHORT).show()
     }
 }
