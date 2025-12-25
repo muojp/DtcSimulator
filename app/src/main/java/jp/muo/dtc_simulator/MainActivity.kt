@@ -239,9 +239,8 @@ class MainActivity : AppCompatActivity() {
         val bandwidthPercent = sliderBandwidth?.value ?: 0f
         val bandwidthKbps = calculateBandwidth(bandwidthPercent)
 
-        // TODO: Add methods to DtcVpnService to update these parameters
-        // service.updatePacketLoss(lossPercent)
-        // service.updateBandwidth(bandwidthKbps)
+        service.updatePacketLoss(lossPercent)
+        service.updateBandwidth(bandwidthKbps)
     }
 
     /**
@@ -657,6 +656,13 @@ class MainActivity : AppCompatActivity() {
         serviceIntent.putExtra(EXTRA_OUTBOUND_LATENCY, outboundMs)
         serviceIntent.putExtra(EXTRA_INBOUND_LATENCY, inboundMs)
 
+        // Add packet loss and bandwidth settings
+        val lossPercent = sliderPacketLoss?.value ?: 0f
+        val bandwidthPercent = sliderBandwidth?.value ?: 0f
+        val bandwidthKbps = calculateBandwidth(bandwidthPercent)
+        serviceIntent.putExtra(EXTRA_PACKET_LOSS, lossPercent)
+        serviceIntent.putExtra(EXTRA_BANDWIDTH, bandwidthKbps)
+
         startService(serviceIntent)
         isVpnRunning = true
         updateVpnButton()
@@ -960,6 +966,8 @@ class MainActivity : AppCompatActivity() {
         // Latency constants
         const val EXTRA_OUTBOUND_LATENCY = "OUTBOUND_LATENCY"
         const val EXTRA_INBOUND_LATENCY = "INBOUND_LATENCY"
+        const val EXTRA_PACKET_LOSS = "PACKET_LOSS"
+        const val EXTRA_BANDWIDTH = "BANDWIDTH"
 
         // SharedPreferences constants
         const val PREFS_NAME = "DtcSimulatorPrefs"

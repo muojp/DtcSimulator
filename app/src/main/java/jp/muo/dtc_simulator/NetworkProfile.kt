@@ -97,7 +97,7 @@ data class NetworkProfile(
     /**
      * Packet loss configuration
      * Can be:
-     * - Single value: loss: 9.0 (applies equally to both directions)
+     * - Single value: loss: 9.0 (split 50/50 between up and down to avoid double-counting)
      * - Up/Down split: loss: { up: 5.0, down: 4.0 }
      */
     data class LossConfig(
@@ -108,11 +108,16 @@ data class NetworkProfile(
         /**
          * Get effective uplink and downlink loss rates
          * Returns Pair(upPercent, downPercent)
+         * Note: For total value, splits 50/50 to prevent effective 2x loss
          */
         fun getEffectiveValues(): Pair<Float, Float> {
             return when {
                 up != null && down != null -> Pair(up, down)
-                value != null -> Pair(value, value)
+                value != null -> {
+                    // Split total loss rate evenly between up and down
+                    val halfValue = value / 2f
+                    Pair(halfValue, halfValue)
+                }
                 else -> Pair(0f, 0f)
             }
         }

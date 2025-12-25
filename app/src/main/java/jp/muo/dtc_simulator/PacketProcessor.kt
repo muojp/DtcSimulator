@@ -49,6 +49,19 @@ class PacketProcessor {
     // Random instance for packet loss simulation
     private val random = Random.Default
 
+    // Packet loss statistics
+    @Volatile
+    private var outboundPacketsTotal = 0L
+    @Volatile
+    private var outboundPacketsDropped = 0L
+    @Volatile
+    private var inboundPacketsTotal = 0L
+    @Volatile
+    private var inboundPacketsDropped = 0L
+
+    private var lastStatsLogTime = 0L
+    private val STATS_LOG_INTERVAL_MS = 10000L // Log stats every 10 seconds
+
     /**
      * Update latency settings for outbound and inbound directions
      * @param outboundMs Latency in milliseconds for outbound packets (VPN → Network)
@@ -73,24 +86,35 @@ class PacketProcessor {
     }
 
     /**
-     * Set packet loss rate for both directions
+     * Set packet loss rate for both directions (splits evenly between up/down)
      * @param rate Packet loss probability (0.0 = no loss, 1.0 = drop all)
+     * Note: Total loss rate is split 50/50 between outbound and inbound to avoid double-counting
      */
     fun setPacketLossRate(rate: Float) {
-        this.outboundLossRate = rate.coerceIn(0f, 1f)
-        this.inboundLossRate = rate.coerceIn(0f, 1f)
-        Log.d(TAG, "Packet loss rate set to: ${this.outboundLossRate}")
+        // Split the total loss rate evenly between outbound and inbound
+        // This prevents effective loss from being ~2x the configured value
+        val halfRate = (rate.coerceIn(0f, 1f)) / 2f
+        this.outboundLossRate = halfRate
+        this.inboundLossRate = halfRate
+        Log.i(TAG, "Packet loss rate set to: ${rate * 100}% total (outbound=${this.outboundLossRate * 100}%, inbound=${this.inboundLossRate * 100}%)")
+
+        // Reset statistics when loss rate changes
+        resetLossStatistics()
     }
 
     /**
-     * Set packet loss rate separately for outbound and inbound
-     * @param outboundRate Outbound packet loss rate (0.0 - 1.0)
-     * @param inboundRate Inbound packet loss rate (0.0 - 1.0)
+     * Set packet loss rate separately for outbound and inbound (for advanced profiles)
+     * @param outboundRate Outbound packet loss rate in percentage (0.0 - 100.0)
+     * @param inboundRate Inbound packet loss rate in percentage (0.0 - 100.0)
      */
     fun setPacketLossRate(outboundRate: Float, inboundRate: Float) {
         this.outboundLossRate = outboundRate.coerceIn(0f, 100f) / 100f
         this.inboundLossRate = inboundRate.coerceIn(0f, 100f) / 100f
-        Log.d(TAG, "Packet loss rate set: outbound=${this.outboundLossRate}, inbound=${this.inboundLossRate}")
+        val totalRate = (this.outboundLossRate + this.inboundLossRate) * 50f
+        Log.i(TAG, "Packet loss rate set: ~${totalRate}% total (outbound=${this.outboundLossRate * 100}%, inbound=${this.inboundLossRate * 100}%)")
+
+        // Reset statistics when loss rate changes
+        resetLossStatistics()
     }
 
     /**
@@ -127,9 +151,12 @@ class PacketProcessor {
      * @param length Actual length of the packet
      */
     fun processOutboundPacket(data: ByteArray, length: Int) {
+        outboundPacketsTotal++
+
         // Apply packet loss
         if (shouldDropPacket(outboundLossRate)) {
-            Log.v(TAG, "Dropped outbound packet (loss simulation)")
+            outboundPacketsDropped++
+            logLossStatistics()
             return
         }
 
@@ -141,6 +168,8 @@ class PacketProcessor {
         } else {
             outboundDelayManager.addPacket(data, length)
         }
+
+        logLossStatistics()
     }
 
     /**
@@ -151,9 +180,12 @@ class PacketProcessor {
      * @param length Actual length of the packet
      */
     fun processInboundPacket(data: ByteArray, length: Int) {
+        inboundPacketsTotal++
+
         // Apply packet loss
         if (shouldDropPacket(inboundLossRate)) {
-            Log.v(TAG, "Dropped inbound packet (loss simulation)")
+            inboundPacketsDropped++
+            logLossStatistics()
             return
         }
 
@@ -165,6 +197,8 @@ class PacketProcessor {
         } else {
             inboundDelayManager.addPacket(data, length)
         }
+
+        logLossStatistics()
     }
 
     /**
@@ -268,6 +302,49 @@ class PacketProcessor {
                 val (up, down) = delayConfig.p95?.getEffectiveValues() ?: Pair(0, 0)
                 if (isOutbound) up else down
             }
+        }
+    }
+
+    /**
+     * Reset packet loss statistics
+     */
+    private fun resetLossStatistics() {
+        outboundPacketsTotal = 0
+        outboundPacketsDropped = 0
+        inboundPacketsTotal = 0
+        inboundPacketsDropped = 0
+        lastStatsLogTime = System.currentTimeMillis()
+    }
+
+    /**
+     * Log packet loss statistics periodically
+     */
+    private fun logLossStatistics() {
+        val now = System.currentTimeMillis()
+        if (now - lastStatsLogTime >= STATS_LOG_INTERVAL_MS) {
+            val outboundActualRate = if (outboundPacketsTotal > 0) {
+                (outboundPacketsDropped * 100.0 / outboundPacketsTotal)
+            } else 0.0
+
+            val inboundActualRate = if (inboundPacketsTotal > 0) {
+                (inboundPacketsDropped * 100.0 / inboundPacketsTotal)
+            } else 0.0
+
+            val totalPackets = outboundPacketsTotal + inboundPacketsTotal
+            val totalDropped = outboundPacketsDropped + inboundPacketsDropped
+            val totalActualRate = if (totalPackets > 0) {
+                (totalDropped * 100.0 / totalPackets)
+            } else 0.0
+
+            val totalTargetRate = (this.outboundLossRate + this.inboundLossRate) * 100f
+
+            Log.i(TAG, "=== PACKET LOSS STATISTICS ===")
+            Log.i(TAG, "Total: ${totalDropped}/${totalPackets} dropped (${String.format("%.2f", totalActualRate)}% actual, ${String.format("%.1f", totalTargetRate)}% target)")
+            Log.i(TAG, "  Outbound: ${outboundPacketsDropped}/${outboundPacketsTotal} (${String.format("%.2f", outboundActualRate)}% actual, ${String.format("%.1f", this.outboundLossRate * 100)}% target)")
+            Log.i(TAG, "  Inbound: ${inboundPacketsDropped}/${inboundPacketsTotal} (${String.format("%.2f", inboundActualRate)}% actual, ${String.format("%.1f", this.inboundLossRate * 100)}% target)")
+            Log.i(TAG, "==============================")
+
+            lastStatsLogTime = now
         }
     }
 

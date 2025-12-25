@@ -53,9 +53,11 @@ class DtcVpnService : VpnService() {
     private var currentServerAddress: String? = null
     private var currentServerSecret: String? = null
 
-    // Latency settings
+    // Network simulation settings
     private var outboundLatencyMs = 0
     private var inboundLatencyMs = 0
+    private var currentPacketLoss: Float = 0f
+    private var currentBandwidthKbps: Int = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -105,7 +107,15 @@ class DtcVpnService : VpnService() {
         // Get initial latency values
         outboundLatencyMs = intent?.getIntExtra(MainActivity.EXTRA_OUTBOUND_LATENCY, 0) ?: 0
         inboundLatencyMs = intent?.getIntExtra(MainActivity.EXTRA_INBOUND_LATENCY, 0) ?: 0
-        Log.i(TAG, "onStartCommand: mode=$vpnMode, Latency: Outbound=$outboundLatencyMs ms, Inbound=$inboundLatencyMs ms")
+
+        // Get packet loss and bandwidth values
+        val packetLoss = intent?.getFloatExtra(MainActivity.EXTRA_PACKET_LOSS, 0f) ?: 0f
+        val bandwidthKbps = intent?.getIntExtra(MainActivity.EXTRA_BANDWIDTH, 0) ?: 0
+
+        Log.i(TAG, "onStartCommand: mode=$vpnMode")
+        Log.i(TAG, "  Latency: Outbound=$outboundLatencyMs ms, Inbound=$inboundLatencyMs ms")
+        Log.i(TAG, "  Packet Loss: $packetLoss%")
+        Log.i(TAG, "  Bandwidth: $bandwidthKbps kbps")
 
         // 重い処理をバックグラウンドスレッドで実行
         Thread({
@@ -121,7 +131,7 @@ class DtcVpnService : VpnService() {
                 mHandler.post {
                     if (isDestroyed) return@post
                     Log.d(TAG, "onStartCommand: calling connect() via Handler")
-                    connect(vpnMode, serverAddress, serverSecret)
+                    connect(vpnMode, serverAddress, serverSecret, packetLoss, bandwidthKbps)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error during service start", e)
@@ -192,9 +202,38 @@ class DtcVpnService : VpnService() {
     }
 
     /**
+     * Update packet loss rate
+     * @param lossPercent Packet loss rate in percentage (0-100)
+     */
+    fun updatePacketLoss(lossPercent: Float) {
+        Log.i(TAG, "Updating packet loss: $lossPercent%")
+
+        val conn = mConnection.get()
+        if (conn != null) {
+            // Convert percentage to rate (0-1)
+            conn.packetProcessor.setPacketLossRate(lossPercent / 100f)
+        }
+    }
+
+    /**
+     * Update bandwidth limit
+     * @param bandwidthKbps Bandwidth limit in kbps (0 = unlimited)
+     */
+    fun updateBandwidth(bandwidthKbps: Int) {
+        Log.i(TAG, "Updating bandwidth: $bandwidthKbps kbps")
+
+        val conn = mConnection.get()
+        if (conn != null) {
+            // Convert kbps to bytes/sec
+            val bytesPerSec = if (bandwidthKbps > 0) (bandwidthKbps * 1024L / 8) else 0L
+            conn.packetProcessor.setBandwidth(bytesPerSec)
+        }
+    }
+
+    /**
      * サーバーへの接続を開始
      */
-    private fun connect(vpnMode: String, serverAddressPort: String, sharedSecret: String) {
+    private fun connect(vpnMode: String, serverAddressPort: String, sharedSecret: String, packetLoss: Float, bandwidthKbps: Int) {
         if (isDestroyed) {
             Log.w(TAG, "connect() ignored: service is destroyed")
             return
@@ -202,15 +241,17 @@ class DtcVpnService : VpnService() {
 
         // Ensure this runs on the serialized handler
         if (Looper.myLooper() != mHandler.looper) {
-            mHandler.post { connect(vpnMode, serverAddressPort, sharedSecret) }
+            mHandler.post { connect(vpnMode, serverAddressPort, sharedSecret, packetLoss, bandwidthKbps) }
             return
         }
 
         Log.i(TAG, "connect: mode=$vpnMode, addr=$serverAddressPort")
-        
+
         this.currentVpnMode = vpnMode
         this.currentServerAddress = serverAddressPort
         this.currentServerSecret = sharedSecret
+        this.currentPacketLoss = packetLoss
+        this.currentBandwidthKbps = bandwidthKbps
 
         // Stop any existing connection attempt first
         setConnectingThread(null)
@@ -230,6 +271,9 @@ class DtcVpnService : VpnService() {
                 // Create centralized PacketProcessor
                 val packetProcessor = PacketProcessor()
                 packetProcessor.setLatency(outboundLatencyMs, inboundLatencyMs)
+                packetProcessor.setPacketLossRate(packetLoss / 100f)
+                val bytesPerSec = if (bandwidthKbps > 0) (bandwidthKbps * 1024L / 8) else 0L
+                packetProcessor.setBandwidth(bytesPerSec)
 
                 val connection = ServerVpnConnection(
                     this,
@@ -244,11 +288,11 @@ class DtcVpnService : VpnService() {
             }
             MainActivity.VPN_MODE_LOCAL -> {
                 Log.i(TAG, "Starting local VPN connection")
-                startLocalConnection(allowedPackages)
+                startLocalConnection(allowedPackages, packetLoss, bandwidthKbps)
             }
             else -> {
                 Log.e(TAG, "Unknown VPN mode: $vpnMode, defaulting to LOCAL")
-                connect(MainActivity.VPN_MODE_LOCAL, serverAddressPort, sharedSecret)
+                connect(MainActivity.VPN_MODE_LOCAL, serverAddressPort, sharedSecret, packetLoss, bandwidthKbps)
             }
         }
     }
@@ -303,8 +347,10 @@ class DtcVpnService : VpnService() {
                                 val mode = currentVpnMode
                                 val addr = currentServerAddress
                                 val secret = currentServerSecret
+                                val loss = currentPacketLoss
+                                val bw = currentBandwidthKbps
                                 if (instance != null && mode != null && addr != null && secret != null) {
-                                    connect(mode, addr, secret)
+                                    connect(mode, addr, secret, loss, bw)
                                 }
                             }, 3000)
                         }
@@ -316,7 +362,7 @@ class DtcVpnService : VpnService() {
         thread.start()
     }
 
-    private fun startLocalConnection(allowedPackages: MutableSet<String>) {
+    private fun startLocalConnection(allowedPackages: MutableSet<String>, packetLoss: Float, bandwidthKbps: Int) {
         val vpnInterface = establishVpnInterface(allowedPackages)
         if (vpnInterface == null) {
             Log.e(TAG, "Failed to establish VPN interface for local mode")
@@ -326,6 +372,9 @@ class DtcVpnService : VpnService() {
         // Create centralized PacketProcessor
         val packetProcessor = PacketProcessor()
         packetProcessor.setLatency(outboundLatencyMs, inboundLatencyMs)
+        packetProcessor.setPacketLossRate(packetLoss / 100f)
+        val bytesPerSec = if (bandwidthKbps > 0) (bandwidthKbps * 1024L / 8) else 0L
+        packetProcessor.setBandwidth(bytesPerSec)
 
         val connection = LocalVpnConnection(this, vpnInterface, packetProcessor)
         val thread = Thread(connection, "LocalVpnConnectionThread")
