@@ -40,10 +40,24 @@
     <string name="scan_apps">Scan Applications</string>
     <string name="scanning_in_progress">Scanning applications…</string>
 
-    <!-- Allowed Apps List -->
-    <string name="allowed_apps_title">Allowed Applications</string>
+    <!-- Activated Apps List -->
+    <string name="allowed_apps_title">Activated Applications</string>
     <string name="allowed_apps_count">0 apps</string>
-    <string name="no_allowed_apps">No allowed applications found.\nInstall apps with the required meta-data to enable VPN access.</string>
+    <string name="no_allowed_apps">No activated applications found.\nInstall apps with the required meta-data to enable VPN access.</string>
+
+    <!-- App Category Tabs -->
+    <string name="tab_satellite_enabled">DTC Ready</string>
+    <string name="tab_satellite_disabled">DTC Not Ready</string>
+
+    <!-- Empty States for Tabs -->
+    <string name="no_satellite_enabled_apps">No satellite-enabled applications found.\nInstall apps with the satellite meta-data tag.</string>
+    <string name="no_satellite_disabled_apps">No other applications found.</string>
+
+    <!-- Toast Messages -->
+    <string name="cannot_change_while_vpn_running">Cannot change app settings while VPN is running.\nPlease stop the VPN first.</string>
+
+    <!-- Search -->
+    <string name="search_apps_hint">Search by name or package</string>
 
     <!-- UDP Echo Test -->
     <string name="udp_echo_test_title">UDP Echo Test</string>

@@ -89,6 +89,14 @@
 
         </LinearLayout>
 
+        <!-- CheckBox for enable/disable -->
+        <CheckBox
+            android:id="@+id/cb_app_enabled"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:contentDescription="Enable app for VPN access" />
+
     </LinearLayout>
 
 </com.google.android.material.card.MaterialCardView>

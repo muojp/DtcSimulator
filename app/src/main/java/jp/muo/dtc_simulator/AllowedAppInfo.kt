@@ -45,6 +45,19 @@ class AllowedAppInfo {
         private set
 
     /**
+     * Indicates if this app has the satellite meta-data tag.
+     * true = meta-data tag present (satellite-enabled)
+     * false = no meta-data tag (satellite-disabled)
+     */
+    var hasSatelliteMetaData: Boolean = false
+
+    /**
+     * Indicates if this app is enabled for VPN access.
+     * This state can be modified by user via checkbox.
+     */
+    var isEnabled: Boolean = false
+
+    /**
      * Creates an AllowedAppInfo with full application details.
      *
      * @param context Application context

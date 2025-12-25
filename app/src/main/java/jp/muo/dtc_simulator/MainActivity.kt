@@ -7,6 +7,9 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
@@ -23,6 +26,8 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.tabs.TabLayout
+import com.google.android.material.textfield.TextInputEditText
 import java.util.Locale
 
 /**
@@ -44,7 +49,10 @@ class MainActivity : AppCompatActivity() {
     private var btnStartVpn: MaterialButton? = null
     private var btnTestUdp: MaterialButton? = null
     private var tvUdpDescription: TextView? = null
-    private var rvAllowedApps: RecyclerView? = null
+    private var tabAppCategories: TabLayout? = null
+    private var etAppSearch: TextInputEditText? = null
+    private var rvSatelliteEnabledApps: RecyclerView? = null
+    private var rvSatelliteDisabledApps: RecyclerView? = null
     private var tvAllowedCount: TextView? = null
     private var tvEmptyState: TextView? = null
     private var tvUdpResult: TextView? = null
@@ -66,8 +74,10 @@ class MainActivity : AppCompatActivity() {
 
     // Business Logic
     private var allowlistManager: AllowlistManager? = null
-    private var adapter: AllowedAppsAdapter? = null
+    private var adapterSatelliteEnabled: AllowedAppsAdapter? = null
+    private var adapterSatelliteDisabled: AllowedAppsAdapter? = null
     private var isVpnRunning = false
+    private var currentTabIndex: Int = 0  // 0 = satellite-enabled, 1 = satellite-disabled
 
     // Statistics Update Timer
     private var statsHandler: Handler? = null
@@ -95,6 +105,8 @@ class MainActivity : AppCompatActivity() {
         initializeViews()
         setupToolbar()
         setupRecyclerView()
+        setupTabLayout()
+        setupSearchField()
         setupButtons()
         setupVpnModeListener()
         setupLatencyControls()
@@ -111,17 +123,8 @@ class MainActivity : AppCompatActivity() {
             registerReceiver(vpnStateReceiver, filter)
         }
 
-        // Auto-scan on startup (background thread)
-        Thread {
-            try {
-                allowlistManager!!.scanAndBuildAllowlist()
-                runOnUiThread {
-                    updateAllowedAppsList()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error during auto-scan", e)
-            }
-        }.start()
+        // Auto-load app lists on startup (background thread)
+        loadAppLists()
     }
 
     /**
@@ -226,7 +229,10 @@ class MainActivity : AppCompatActivity() {
         btnStartVpn = findViewById(R.id.btn_start_vpn)
         btnTestUdp = findViewById(R.id.btn_test_udp)
         tvUdpDescription = findViewById(R.id.tv_udp_description)
-        rvAllowedApps = findViewById(R.id.rv_allowed_apps)
+        tabAppCategories = findViewById(R.id.tab_app_categories)
+        etAppSearch = findViewById(R.id.et_app_search)
+        rvSatelliteEnabledApps = findViewById(R.id.rv_satellite_enabled_apps)
+        rvSatelliteDisabledApps = findViewById(R.id.rv_satellite_disabled_apps)
         tvAllowedCount = findViewById(R.id.tv_allowed_count)
         tvEmptyState = findViewById(R.id.tv_empty_state)
         tvUdpResult = findViewById(R.id.tv_udp_result)
@@ -258,12 +264,156 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Setup RecyclerView with adapter and layout manager
+     * Setup RecyclerViews with adapters and layout managers
      */
     private fun setupRecyclerView() {
-        adapter = AllowedAppsAdapter(this)
-        rvAllowedApps!!.setLayoutManager(LinearLayoutManager(this))
-        rvAllowedApps!!.setAdapter(adapter)
+        // Create adapters with checkbox change callback
+        adapterSatelliteEnabled = AllowedAppsAdapter(this) { appInfo, isChecked ->
+            onAppCheckboxChanged(appInfo, isChecked)
+        }
+        adapterSatelliteDisabled = AllowedAppsAdapter(this) { appInfo, isChecked ->
+            onAppCheckboxChanged(appInfo, isChecked)
+        }
+
+        // Setup satellite-enabled RecyclerView
+        rvSatelliteEnabledApps!!.layoutManager = LinearLayoutManager(this)
+        rvSatelliteEnabledApps!!.adapter = adapterSatelliteEnabled
+
+        // Setup satellite-disabled RecyclerView
+        rvSatelliteDisabledApps!!.layoutManager = LinearLayoutManager(this)
+        rvSatelliteDisabledApps!!.adapter = adapterSatelliteDisabled
+    }
+
+    /**
+     * Setup TabLayout for switching between satellite-enabled and satellite-disabled apps
+     */
+    private fun setupTabLayout() {
+        // Add tabs
+        tabAppCategories?.addTab(tabAppCategories!!.newTab().setText(R.string.tab_satellite_enabled))
+        tabAppCategories?.addTab(tabAppCategories!!.newTab().setText(R.string.tab_satellite_disabled))
+
+        // Set tab selection listener
+        tabAppCategories?.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab?) {
+                currentTabIndex = tab?.position ?: 0
+                updateRecyclerViewVisibility()
+                // Clear search when switching tabs
+                etAppSearch?.text?.clear()
+                updateEmptyState()
+            }
+
+            override fun onTabUnselected(tab: TabLayout.Tab?) {
+                // Clear filter for the tab being left
+                val unselectedIndex = tab?.position ?: 0
+                when (unselectedIndex) {
+                    0 -> adapterSatelliteEnabled?.filter("")
+                    1 -> adapterSatelliteDisabled?.filter("")
+                }
+            }
+
+            override fun onTabReselected(tab: TabLayout.Tab?) {
+                // No action needed
+            }
+        })
+
+        // Select the first tab by default
+        tabAppCategories?.selectTab(tabAppCategories?.getTabAt(0))
+    }
+
+    /**
+     * Update RecyclerView visibility based on selected tab
+     */
+    private fun updateRecyclerViewVisibility() {
+        when (currentTabIndex) {
+            0 -> {
+                // Show satellite-enabled apps
+                rvSatelliteEnabledApps?.visibility = View.VISIBLE
+                rvSatelliteDisabledApps?.visibility = View.GONE
+            }
+            1 -> {
+                // Show satellite-disabled apps
+                rvSatelliteEnabledApps?.visibility = View.GONE
+                rvSatelliteDisabledApps?.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    /**
+     * Update empty state visibility and message based on current tab
+     */
+    private fun updateEmptyState() {
+        val currentCount = when (currentTabIndex) {
+            0 -> adapterSatelliteEnabled?.itemCount ?: 0
+            1 -> adapterSatelliteDisabled?.itemCount ?: 0
+            else -> 0
+        }
+
+        if (currentCount == 0) {
+            tvEmptyState?.visibility = View.VISIBLE
+            // Update empty state message based on tab
+            tvEmptyState?.text = when (currentTabIndex) {
+                0 -> getString(R.string.no_satellite_enabled_apps)
+                1 -> getString(R.string.no_satellite_disabled_apps)
+                else -> getString(R.string.no_allowed_apps)
+            }
+        } else {
+            tvEmptyState?.visibility = View.GONE
+        }
+    }
+
+    /**
+     * Setup search field for filtering apps
+     */
+    private fun setupSearchField() {
+        etAppSearch?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+                // No action needed
+            }
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                // Filter current adapter based on search query
+                val query = s?.toString() ?: ""
+                filterCurrentAdapter(query)
+            }
+
+            override fun afterTextChanged(s: Editable?) {
+                // No action needed
+            }
+        })
+    }
+
+    /**
+     * Filter the current adapter based on search query
+     */
+    private fun filterCurrentAdapter(query: String) {
+        when (currentTabIndex) {
+            0 -> adapterSatelliteEnabled?.filter(query)
+            1 -> adapterSatelliteDisabled?.filter(query)
+        }
+        updateEmptyState()
+    }
+
+    /**
+     * Callback when app checkbox state changes
+     */
+    private fun onAppCheckboxChanged(appInfo: AllowedAppInfo, isChecked: Boolean) {
+        if (isVpnRunning) {
+            Toast.makeText(this, R.string.cannot_change_while_vpn_running, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Save to SharedPreferences
+        allowlistManager?.saveAppEnabledState(appInfo.packageName, isChecked)
+
+        // Update the count badge to reflect the change
+        updateTabCounts()
+
+        // For satellite-disabled tab, sort by checked state (checked apps on top)
+        if (currentTabIndex == 1) {
+            adapterSatelliteDisabled?.sortByCheckedState()
+        }
+
+        Log.d(TAG, "App ${appInfo.packageName} enabled state changed to: $isChecked")
     }
 
     /**
@@ -445,6 +595,9 @@ class MainActivity : AppCompatActivity() {
             rgVpnMode?.isEnabled = false
             rbServerMode?.isEnabled = false
             rbLocalMode?.isEnabled = false
+            // Disable checkboxes when VPN is running
+            adapterSatelliteEnabled?.setVpnRunning(true)
+            adapterSatelliteDisabled?.setVpnRunning(true)
         } else {
             btnStartVpn!!.setText(R.string.start_vpn)
             btnStartVpn!!.setIcon(getDrawable(android.R.drawable.ic_media_play))
@@ -453,56 +606,75 @@ class MainActivity : AppCompatActivity() {
             rgVpnMode?.isEnabled = true
             rbServerMode?.isEnabled = true
             rbLocalMode?.isEnabled = true
+            // Enable checkboxes when VPN is stopped
+            adapterSatelliteEnabled?.setVpnRunning(false)
+            adapterSatelliteDisabled?.setVpnRunning(false)
         }
     }
 
     /**
-     * Update the RecyclerView with the current list of allowed apps
+     * Load app lists for both tabs (satellite-enabled and satellite-disabled)
+     * Runs on background thread for performance
      */
-    private fun updateAllowedAppsList() {
-        val allowedPackages = allowlistManager!!.getAllowedPackages()
-        val appInfoList: MutableList<AllowedAppInfo?> = ArrayList()
-
-        val selfPackage = packageName
-
-        // Convert package names to AppInfo objects with labels and icons
-        for (packageName in allowedPackages) {
-            // Filter out DtcSimulator itself from UI display
-            if (packageName == selfPackage) {
-                continue
-            }
-
+    private fun loadAppLists() {
+        Thread {
             try {
-                val appInfo = AllowedAppInfo(this, packageName)
-                appInfoList.add(appInfo)
-            } catch (_: Exception) {
-                // If we can't get app info, create a minimal entry
-                appInfoList.add(AllowedAppInfo(packageName))
+                Log.i(TAG, "Loading app lists...")
+
+                // Get satellite-enabled apps
+                val satelliteApps = allowlistManager!!.getSatelliteEnabledApps().toMutableList()
+
+                // Get all installed apps
+                val allApps = allowlistManager!!.getAllInstalledApps()
+
+                // Filter satellite-disabled apps (those without meta-data tag)
+                val satelliteDisabledApps = allApps.filter { !it.hasSatelliteMetaData }.toMutableList()
+
+                // Load enabled states from SharedPreferences
+                val enabledStates = allowlistManager!!.getAllEnabledStates()
+
+                // Apply enabled states to satellite-enabled apps
+                for (app in satelliteApps) {
+                    app.isEnabled = enabledStates[app.packageName] ?: true  // Default enabled
+                }
+
+                // Apply enabled states to satellite-disabled apps
+                for (app in satelliteDisabledApps) {
+                    app.isEnabled = enabledStates[app.packageName] ?: false  // Default disabled
+                }
+
+                // Update UI on main thread
+                runOnUiThread {
+                    // Update adapters
+                    adapterSatelliteEnabled?.setAppList(satelliteApps)
+                    adapterSatelliteDisabled?.setAppList(satelliteDisabledApps)
+
+                    // Sort satellite-disabled apps by checked state (checked apps on top)
+                    adapterSatelliteDisabled?.sortByCheckedState()
+
+                    // Update tab counts
+                    updateTabCounts()
+
+                    // Update empty state
+                    updateEmptyState()
+
+                    Log.i(TAG, "App lists loaded: ${satelliteApps.size} satellite-enabled, ${satelliteDisabledApps.size} satellite-disabled")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading app lists", e)
+                runOnUiThread {
+                    Toast.makeText(this, "Error loading app lists: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
-        }
+        }.start()
+    }
 
-        // Sort alphabetically by app name
-        appInfoList.sortWith(Comparator { a: AllowedAppInfo?, b: AllowedAppInfo? ->
-                    val nameA = a?.appName ?: a?.packageName ?: ""
-                    val nameB = b?.appName ?: b?.packageName ?: ""
-                    nameA.compareTo(nameB, ignoreCase = true)
-                })
-
-        // Update adapter
-        adapter!!.setAppList(appInfoList)
-
-        // Update count badge
-        val count = appInfoList.size
-        tvAllowedCount!!.text = "$count apps"
-
-        // Show/hide empty state
-        if (count == 0) {
-            rvAllowedApps!!.visibility = View.GONE
-            tvEmptyState!!.visibility = View.VISIBLE
-        } else {
-            rvAllowedApps!!.visibility = View.VISIBLE
-            tvEmptyState!!.visibility = View.GONE
-        }
+    /**
+     * Update tab count badge with total enabled apps
+     */
+    private fun updateTabCounts() {
+        val enabledAppsCount = allowlistManager?.getFinalAllowedPackages()?.size ?: 0
+        tvAllowedCount?.text = "$enabledAppsCount apps"
     }
 
     override fun onResume() {
@@ -519,9 +691,9 @@ class MainActivity : AppCompatActivity() {
             updateServiceLatency()
         }
 
-        // Refresh the list when returning to the activity
+        // Refresh the lists when returning to the activity
         // (in case new apps were installed)
-        updateAllowedAppsList()
+        loadAppLists()
 
         // Update UDP echo description (in case server address changed in settings)
         updateUdpEchoDescription()

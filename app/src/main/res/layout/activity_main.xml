@@ -470,25 +470,79 @@
                         android:background="?android:attr/listDivider"
                         android:layout_marginBottom="12dp" />
 
-                    <androidx.recyclerview.widget.RecyclerView
-                        android:id="@+id/rv_allowed_apps"
+                    <!-- TabLayout for switching between satellite-enabled and satellite-disabled apps -->
+                    <com.google.android.material.tabs.TabLayout
+                        android:id="@+id/tab_app_categories"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:minHeight="200dp"
-                        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
-                        tools:listitem="@android:layout/simple_list_item_1"
-                        tools:itemCount="3" />
+                        android:layout_marginBottom="8dp"
+                        app:tabMode="fixed"
+                        app:tabGravity="fill"
+                        app:tabIndicatorColor="?attr/colorPrimary"
+                        app:tabTextColor="?android:attr/textColorSecondary"
+                        app:tabSelectedTextColor="?attr/colorPrimary" />
 
-                    <TextView
-                        android:id="@+id/tv_empty_state"
+                    <!-- Search field for filtering apps -->
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/til_app_search"
                         android:layout_width="match_parent"
-                        android:layout_height="200dp"
-                        android:text="@string/no_allowed_apps"
-                        android:textAppearance="@style/TextAppearance.MaterialComponents.Body1"
-                        android:textColor="?android:attr/textColorSecondary"
-                        android:gravity="center"
-                        android:visibility="gone"
-                        tools:visibility="visible" />
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        app:startIconDrawable="@android:drawable/ic_menu_search"
+                        app:endIconMode="clear_text"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_app_search"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="@string/search_apps_hint"
+                            android:inputType="text"
+                            android:imeOptions="actionSearch"
+                            android:maxLines="1" />
+
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- Container for RecyclerViews -->
+                    <FrameLayout
+                        android:id="@+id/fl_recycler_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="200dp">
+
+                        <!-- RecyclerView for satellite-enabled apps (Tab 1) -->
+                        <androidx.recyclerview.widget.RecyclerView
+                            android:id="@+id/rv_satellite_enabled_apps"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:visibility="visible"
+                            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                            tools:listitem="@layout/item_allowed_app"
+                            tools:itemCount="3" />
+
+                        <!-- RecyclerView for satellite-disabled apps (Tab 2) -->
+                        <androidx.recyclerview.widget.RecyclerView
+                            android:id="@+id/rv_satellite_disabled_apps"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:visibility="gone"
+                            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                            tools:listitem="@layout/item_allowed_app"
+                            tools:itemCount="5" />
+
+                        <!-- Empty state (shared by both tabs) -->
+                        <TextView
+                            android:id="@+id/tv_empty_state"
+                            android:layout_width="match_parent"
+                            android:layout_height="200dp"
+                            android:text="@string/no_allowed_apps"
+                            android:textAppearance="@style/TextAppearance.MaterialComponents.Body1"
+                            android:textColor="?android:attr/textColorSecondary"
+                            android:gravity="center"
+                            android:visibility="gone"
+                            tools:visibility="visible" />
+
+                    </FrameLayout>
 
                 </LinearLayout>
 

@@ -194,8 +194,8 @@ class DtcVpnService : VpnService() {
         // Stop any existing connection attempt first
         setConnectingThread(null)
 
-        // Get allowed packages from AllowlistManager
-        val allowedPackages = allowlistManager!!.getAllowedPackages().toMutableSet()
+        // Get allowed packages from AllowlistManager (merges meta-data apps with user overrides)
+        val allowedPackages = allowlistManager!!.getFinalAllowedPackages().toMutableSet()
         Log.i(TAG, "Allowed packages: " + allowedPackages.size + " apps")
 
         when (vpnMode) {
