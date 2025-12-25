@@ -110,8 +110,20 @@ class ServerVpnConnection(
         } catch (e: Exception) {
             Log.e(TAG, "[$instanceId] Connection error: ${e.message}", e)
             errorMessage = e.message
-            // If the error happens during handshake or initial setup, consider it fatal
-            isFatal = true
+            
+            isFatal = when {
+                // Handshake failures are fatal
+                e.message?.contains("handshake", ignoreCase = true) == true -> true
+                // Fundamental network unreachable errors are fatal
+                e is java.net.UnknownHostException || 
+                e is java.net.NoRouteToHostException || 
+                e is java.net.PortUnreachableException -> true
+                e.message?.contains("unreachable", ignoreCase = true) == true -> true
+                // "No inbound traffic" is a retryable idle timeout
+                e is IOException && e.message == "No inbound traffic for 60s" -> false
+                // Other IOExceptions are generally retryable, but non-IOExceptions are fatal
+                else -> e !is IOException
+            }
         } finally {
             mRunning = false
             Log.i(TAG, "[$instanceId] Calling onDisconnect (isFatal=$isFatal, error=$errorMessage)")

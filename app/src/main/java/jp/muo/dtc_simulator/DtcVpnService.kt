@@ -43,7 +43,6 @@ class DtcVpnService : VpnService() {
 
     private var allowlistManager: AllowlistManager? = null
     private var mConfigureIntent: PendingIntent? = null
-    private var wakeLock: PowerManager.WakeLock? = null
 
     @Volatile
     private var isDestroyed = false
@@ -73,10 +72,6 @@ class DtcVpnService : VpnService() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
-
-        // WakeLockの初期化
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DtcSimulator:VpnWakeLock")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -98,9 +93,6 @@ class DtcVpnService : VpnService() {
 
         // フォアグラウンドサービスとして通知表示
         startForegroundWithNotification()
-
-        // WakeLockの取得
-        wakeLock?.acquire(10 * 60 * 1000L)
 
         // Get VPN mode from intent (default to LOCAL mode)
         val vpnMode = intent?.getStringExtra(MainActivity.EXTRA_VPN_MODE) ?: MainActivity.VPN_MODE_LOCAL
@@ -156,16 +148,6 @@ class DtcVpnService : VpnService() {
         val intent = Intent(ACTION_VPN_STOPPED)
         intent.`package` = packageName
         sendBroadcast(intent)
-
-        // WakeLockの解放
-        if (wakeLock?.isHeld == true) {
-            try {
-                wakeLock?.release()
-                Log.d(TAG, "onDestroy: WakeLock released")
-            } catch (e: Exception) {
-                Log.e(TAG, "onDestroy: Error releasing WakeLock", e)
-            }
-        }
 
         instance = null
         Log.i(TAG, "onDestroy: DtcVpnService stopped and instance cleared")
