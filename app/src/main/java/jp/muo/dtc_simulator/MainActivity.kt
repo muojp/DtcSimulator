@@ -724,6 +724,13 @@ class MainActivity : AppCompatActivity() {
         serviceIntent.putExtra(EXTRA_PACKET_LOSS, networkParams.packetLoss)
         serviceIntent.putExtra(EXTRA_BANDWIDTH, networkParams.bandwidth)
 
+        // Add network configuration mode and profile index
+        serviceIntent.putExtra(EXTRA_NETWORK_CONFIG_MODE, currentNetworkConfigMode)
+        if (currentNetworkConfigMode == 1) {
+            // Preset mode: include profile index
+            serviceIntent.putExtra(EXTRA_PROFILE_INDEX, selectedProfileIndex)
+        }
+
         startService(serviceIntent)
         isVpnRunning = true
         updateVpnButton()
@@ -1094,7 +1101,15 @@ class MainActivity : AppCompatActivity() {
                 id: Long
             ) {
                 selectedProfileIndex = position
-                // Profile will be applied when VPN starts
+
+                // If VPN is running, notify the service to update the profile
+                if (isVpnRunning && currentNetworkConfigMode == 1) {
+                    Log.d(TAG, "Profile changed to index $position while VPN is running, sending update")
+                    val updateIntent = Intent(this@MainActivity, DtcVpnService::class.java)
+                    updateIntent.action = DtcVpnService.ACTION_UPDATE_PROFILE
+                    updateIntent.putExtra(EXTRA_PROFILE_INDEX, position)
+                    startService(updateIntent)
+                }
             }
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
@@ -1130,6 +1145,10 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_INBOUND_LATENCY = "INBOUND_LATENCY"
         const val EXTRA_PACKET_LOSS = "PACKET_LOSS"
         const val EXTRA_BANDWIDTH = "BANDWIDTH"
+
+        // Network Profile constants
+        const val EXTRA_NETWORK_CONFIG_MODE = "NETWORK_CONFIG_MODE"  // 0=manual, 1=preset
+        const val EXTRA_PROFILE_INDEX = "PROFILE_INDEX"
 
         // SharedPreferences constants
         const val PREFS_NAME = "DtcSimulatorPrefs"

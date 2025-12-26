@@ -281,28 +281,9 @@ class PacketProcessor {
             return if (isOutbound) outboundLatencyMs else inboundLatencyMs
         }
 
-        // Generate random percentile (0.0 - 1.0)
-        val percentile = random.nextFloat()
-
-        // Map percentile to delay value
-        return when {
-            percentile <= 0.25f -> {
-                val (up, down) = delayConfig.p25?.getEffectiveValues() ?: Pair(0, 0)
-                if (isOutbound) up else down
-            }
-            percentile <= 0.50f -> {
-                val (up, down) = delayConfig.p50?.getEffectiveValues() ?: Pair(0, 0)
-                if (isOutbound) up else down
-            }
-            percentile <= 0.90f -> {
-                val (up, down) = delayConfig.p90?.getEffectiveValues() ?: Pair(0, 0)
-                if (isOutbound) up else down
-            }
-            else -> {
-                val (up, down) = delayConfig.p95?.getEffectiveValues() ?: Pair(0, 0)
-                if (isOutbound) up else down
-            }
-        }
+        // Sample from the percentile distribution with linear interpolation
+        val (up, down) = delayConfig.sampleFromDistribution(random)
+        return if (isOutbound) up else down
     }
 
     /**

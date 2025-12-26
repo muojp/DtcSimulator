@@ -88,6 +88,13 @@ class DtcVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
+        // Handle profile update action
+        if (intent?.action == ACTION_UPDATE_PROFILE) {
+            Log.i(TAG, "onStartCommand: Received UPDATE_PROFILE action")
+            handleProfileUpdate(intent)
+            return START_STICKY
+        }
+
         if (isDestroyed) {
             Log.w(TAG, "onStartCommand: service is already marked as destroyed, ignoring")
             stopSelf(startId)
@@ -112,10 +119,18 @@ class DtcVpnService : VpnService() {
         val packetLoss = intent?.getFloatExtra(MainActivity.EXTRA_PACKET_LOSS, 0f) ?: 0f
         val bandwidthKbps = intent?.getIntExtra(MainActivity.EXTRA_BANDWIDTH, 0) ?: 0
 
+        // Get network configuration mode and profile index
+        val networkConfigMode = intent?.getIntExtra(MainActivity.EXTRA_NETWORK_CONFIG_MODE, 0) ?: 0
+        val profileIndex = intent?.getIntExtra(MainActivity.EXTRA_PROFILE_INDEX, -1) ?: -1
+
         Log.i(TAG, "onStartCommand: mode=$vpnMode")
         Log.i(TAG, "  Latency: Outbound=$outboundLatencyMs ms, Inbound=$inboundLatencyMs ms")
         Log.i(TAG, "  Packet Loss: $packetLoss%")
         Log.i(TAG, "  Bandwidth: $bandwidthKbps kbps")
+        Log.i(TAG, "  Network Config Mode: $networkConfigMode (0=manual, 1=preset)")
+        if (networkConfigMode == 1) {
+            Log.i(TAG, "  Profile Index: $profileIndex")
+        }
 
         // 重い処理をバックグラウンドスレッドで実行
         Thread({
@@ -131,7 +146,7 @@ class DtcVpnService : VpnService() {
                 mHandler.post {
                     if (isDestroyed) return@post
                     Log.d(TAG, "onStartCommand: calling connect() via Handler")
-                    connect(vpnMode, serverAddress, serverSecret, packetLoss, bandwidthKbps)
+                    connect(vpnMode, serverAddress, serverSecret, packetLoss, bandwidthKbps, networkConfigMode, profileIndex)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error during service start", e)
@@ -233,7 +248,7 @@ class DtcVpnService : VpnService() {
     /**
      * サーバーへの接続を開始
      */
-    private fun connect(vpnMode: String, serverAddressPort: String, sharedSecret: String, packetLoss: Float, bandwidthKbps: Int) {
+    private fun connect(vpnMode: String, serverAddressPort: String, sharedSecret: String, packetLoss: Float, bandwidthKbps: Int, networkConfigMode: Int = 0, profileIndex: Int = -1) {
         if (isDestroyed) {
             Log.w(TAG, "connect() ignored: service is destroyed")
             return
@@ -241,7 +256,7 @@ class DtcVpnService : VpnService() {
 
         // Ensure this runs on the serialized handler
         if (Looper.myLooper() != mHandler.looper) {
-            mHandler.post { connect(vpnMode, serverAddressPort, sharedSecret, packetLoss, bandwidthKbps) }
+            mHandler.post { connect(vpnMode, serverAddressPort, sharedSecret, packetLoss, bandwidthKbps, networkConfigMode, profileIndex) }
             return
         }
 
@@ -275,6 +290,16 @@ class DtcVpnService : VpnService() {
                 val bytesPerSec = if (bandwidthKbps > 0) (bandwidthKbps * 1024L / 8) else 0L
                 packetProcessor.setBandwidth(bytesPerSec)
 
+                // Set network profile if in preset mode
+                if (networkConfigMode == 1 && profileIndex >= 0) {
+                    val profileManager = NetworkProfileManager(this)
+                    val profile = profileManager.getProfileByIndex(profileIndex)
+                    if (profile != null) {
+                        packetProcessor.setNetworkProfile(profile)
+                        Log.i(TAG, "Applied network profile: ${profile.name}")
+                    }
+                }
+
                 val connection = ServerVpnConnection(
                     this,
                     serverAddress,
@@ -288,11 +313,11 @@ class DtcVpnService : VpnService() {
             }
             MainActivity.VPN_MODE_LOCAL -> {
                 Log.i(TAG, "Starting local VPN connection")
-                startLocalConnection(allowedPackages, packetLoss, bandwidthKbps)
+                startLocalConnection(allowedPackages, packetLoss, bandwidthKbps, networkConfigMode, profileIndex)
             }
             else -> {
                 Log.e(TAG, "Unknown VPN mode: $vpnMode, defaulting to LOCAL")
-                connect(MainActivity.VPN_MODE_LOCAL, serverAddressPort, sharedSecret, packetLoss, bandwidthKbps)
+                connect(MainActivity.VPN_MODE_LOCAL, serverAddressPort, sharedSecret, packetLoss, bandwidthKbps, networkConfigMode, profileIndex)
             }
         }
     }
@@ -362,7 +387,7 @@ class DtcVpnService : VpnService() {
         thread.start()
     }
 
-    private fun startLocalConnection(allowedPackages: MutableSet<String>, packetLoss: Float, bandwidthKbps: Int) {
+    private fun startLocalConnection(allowedPackages: MutableSet<String>, packetLoss: Float, bandwidthKbps: Int, networkConfigMode: Int = 0, profileIndex: Int = -1) {
         val vpnInterface = establishVpnInterface(allowedPackages)
         if (vpnInterface == null) {
             Log.e(TAG, "Failed to establish VPN interface for local mode")
@@ -375,6 +400,16 @@ class DtcVpnService : VpnService() {
         packetProcessor.setPacketLossRate(packetLoss / 100f)
         val bytesPerSec = if (bandwidthKbps > 0) (bandwidthKbps * 1024L / 8) else 0L
         packetProcessor.setBandwidth(bytesPerSec)
+
+        // Set network profile if in preset mode
+        if (networkConfigMode == 1 && profileIndex >= 0) {
+            val profileManager = NetworkProfileManager(this)
+            val profile = profileManager.getProfileByIndex(profileIndex)
+            if (profile != null) {
+                packetProcessor.setNetworkProfile(profile)
+                Log.i(TAG, "Applied network profile: ${profile.name}")
+            }
+        }
 
         val connection = LocalVpnConnection(this, vpnInterface, packetProcessor)
         val thread = Thread(connection, "LocalVpnConnectionThread")
@@ -504,10 +539,45 @@ class DtcVpnService : VpnService() {
             return null
         }
 
+    /**
+     * Handle profile update request
+     */
+    private fun handleProfileUpdate(intent: Intent?) {
+        if (intent == null) {
+            Log.w(TAG, "handleProfileUpdate: intent is null")
+            return
+        }
+
+        val profileIndex = intent.getIntExtra(MainActivity.EXTRA_PROFILE_INDEX, -1)
+        if (profileIndex < 0) {
+            Log.w(TAG, "handleProfileUpdate: invalid profile index $profileIndex")
+            return
+        }
+
+        val conn = mConnection.get()
+        if (conn == null) {
+            Log.w(TAG, "handleProfileUpdate: no active connection")
+            return
+        }
+
+        // Load and apply the profile
+        val profileManager = NetworkProfileManager(this)
+        val profile = profileManager.getProfileByIndex(profileIndex)
+
+        if (profile != null) {
+            Log.i(TAG, "handleProfileUpdate: applying profile '${profile.name}' (index $profileIndex)")
+            conn.packetProcessor.setNetworkProfile(profile)
+            Log.i(TAG, "handleProfileUpdate: profile applied successfully")
+        } else {
+            Log.w(TAG, "handleProfileUpdate: profile not found at index $profileIndex")
+        }
+    }
+
     companion object {
         private const val TAG = "DtcVpnService"
         const val ACTION_STOP_VPN = "jp.muo.dtc_simulator.ACTION_STOP_VPN"
         const val ACTION_VPN_STOPPED = "jp.muo.dtc_simulator.ACTION_VPN_STOPPED"
+        const val ACTION_UPDATE_PROFILE = "jp.muo.dtc_simulator.ACTION_UPDATE_PROFILE"
 
         var instance: DtcVpnService? = null
             private set
