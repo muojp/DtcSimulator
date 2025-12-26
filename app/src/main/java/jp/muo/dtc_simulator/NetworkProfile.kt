@@ -10,6 +10,7 @@ package jp.muo.dtc_simulator
  *
  * Example YAML configurations:
  * ```
+ * name: "LEO Satellite"
  * delay:
  *   p25: 90
  *   p50: 145
@@ -20,6 +21,7 @@ package jp.muo.dtc_simulator
  * ```
  */
 data class NetworkProfile(
+    val name: String = "Unnamed Profile",
     val delay: DelayConfig? = null,
     val loss: LossConfig? = null,
     val bandwidth: BandwidthConfig? = null

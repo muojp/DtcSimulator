@@ -62,6 +62,11 @@
     <string name="tab_satellite_enabled">DTC Ready</string>
     <string name="tab_satellite_disabled">DTC Not Ready</string>
 
+    <!-- Network Configuration Tabs -->
+    <string name="tab_manual">Manual</string>
+    <string name="tab_preset">Preset</string>
+    <string name="cannot_change_tab_while_vpn_running">Cannot change configuration mode while VPN is running</string>
+
     <!-- Empty States for Tabs -->
     <string name="no_satellite_enabled_apps">No satellite-enabled applications found.\nInstall apps with the satellite meta-data tag.</string>
     <string name="no_satellite_disabled_apps">No other applications found.</string>

@@ -104,14 +104,40 @@
                         android:background="?android:attr/listDivider"
                         android:layout_marginBottom="16dp" />
 
-                    <!-- Latency Simulation Controls -->
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <!-- Network Configuration Tab Layout -->
+                    <com.google.android.material.tabs.TabLayout
+                        android:id="@+id/tab_network_config"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/latency_simulation_title"
-                        android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle2"
-                        android:textColor="?attr/colorPrimary"
-                        android:layout_marginBottom="8dp" />
+                        android:layout_marginBottom="16dp"
+                        app:tabMode="fixed"
+                        app:tabGravity="fill"
+                        app:tabIndicatorColor="?attr/colorPrimary"
+                        app:tabTextColor="?android:attr/textColorSecondary"
+                        app:tabSelectedTextColor="?attr/colorPrimary" />
+
+                    <!-- Container for Manual and Preset configurations -->
+                    <FrameLayout
+                        android:id="@+id/fl_network_config_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content">
+
+                        <!-- Manual Configuration (Sliders) -->
+                        <LinearLayout
+                            android:id="@+id/ll_manual_config"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="visible">
+
+                            <!-- Latency Simulation Controls -->
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/latency_simulation_title"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle2"
+                                android:textColor="?attr/colorPrimary"
+                                android:layout_marginBottom="8dp" />
 
                     <!-- Outbound Latency -->
                     <LinearLayout
@@ -222,15 +248,61 @@
                             android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
                             android:textStyle="bold" />
                     </LinearLayout>
-                    <com.google.android.material.slider.Slider
-                        android:id="@+id/slider_bandwidth"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:valueFrom="0"
-                        android:valueTo="100"
-                        android:stepSize="1"
-                        android:value="0"
-                        app:labelBehavior="gone" />
+                            <com.google.android.material.slider.Slider
+                                android:id="@+id/slider_bandwidth"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:valueFrom="0"
+                                android:valueTo="100"
+                                android:stepSize="1"
+                                android:value="0"
+                                app:labelBehavior="gone" />
+
+                        </LinearLayout>
+
+                        <!-- Preset Configuration (Profile Selection) -->
+                        <LinearLayout
+                            android:id="@+id/ll_preset_config"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Network Profile"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle2"
+                                android:textColor="?attr/colorPrimary"
+                                android:layout_marginBottom="8dp" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Select a preset network simulation profile"
+                                android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
+                                android:textColor="?android:attr/textColorSecondary"
+                                android:layout_marginBottom="12dp" />
+
+                            <Spinner
+                                android:id="@+id/spinner_profiles"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:minHeight="48dp"
+                                android:layout_marginBottom="16dp" />
+
+                            <Button
+                                android:id="@+id/btn_configure_profiles"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Configure Profiles..."
+                                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                                app:icon="@android:drawable/ic_menu_edit"
+                                app:iconGravity="start" />
+
+                        </LinearLayout>
+
+                    </FrameLayout>
 
                     <View
                         android:layout_width="match_parent"

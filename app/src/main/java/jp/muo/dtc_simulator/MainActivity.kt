@@ -1,6 +1,7 @@
 package jp.muo.dtc_simulator
 
 import android.Manifest
+import android.content.Context.RECEIVER_NOT_EXPORTED
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.VpnService
@@ -31,6 +32,16 @@ import com.google.android.material.textfield.TextInputEditText
 import java.util.Locale
 
 /**
+ * Network parameters holder
+ */
+private data class NetworkParams(
+    val outboundLatency: Int,
+    val inboundLatency: Int,
+    val packetLoss: Float,
+    val bandwidth: Int
+)
+
+/**
  * MainActivity
  *
  * Main activity for DTC Simulator application.
@@ -57,7 +68,14 @@ class MainActivity : AppCompatActivity() {
     private var tvEmptyState: TextView? = null
     private var tvUdpResult: TextView? = null
 
-    // Latency Simulation UI Components
+    // Network Configuration UI Components
+    private var tabNetworkConfig: TabLayout? = null
+    private var llManualConfig: View? = null
+    private var llPresetConfig: View? = null
+    private var spinnerProfiles: android.widget.Spinner? = null
+    private var btnConfigureProfiles: MaterialButton? = null
+
+    // Latency Simulation UI Components (Manual Mode)
     private var tvOutboundLatency: TextView? = null
     private var sliderOutboundLatency: com.google.android.material.slider.Slider? = null
     private var tvInboundLatency: TextView? = null
@@ -78,10 +96,13 @@ class MainActivity : AppCompatActivity() {
 
     // Business Logic
     private var allowlistManager: AllowlistManager? = null
+    private var profileManager: NetworkProfileManager? = null
     private var adapterSatelliteEnabled: AllowedAppsAdapter? = null
     private var adapterSatelliteDisabled: AllowedAppsAdapter? = null
     private var isVpnRunning = false
     private var currentTabIndex: Int = 0  // 0 = satellite-enabled, 1 = satellite-disabled
+    private var currentNetworkConfigMode: Int = 0  // 0 = manual, 1 = preset
+    private var selectedProfileIndex: Int = 0
 
     // Statistics Update Timer
     private var statsHandler: Handler? = null
@@ -102,8 +123,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Initialize AllowlistManager
+        // Initialize managers
         allowlistManager = AllowlistManager(this)
+        profileManager = NetworkProfileManager(this)
 
         // Initialize UI components
         initializeViews()
@@ -113,8 +135,10 @@ class MainActivity : AppCompatActivity() {
         setupSearchField()
         setupButtons()
         setupVpnModeListener()
+        setupNetworkConfigTabs()
         setupLatencyControls()
         setupLossAndBandwidthControls()
+        setupProfileSpinner()
         setupStatsTimer()
         updateUdpEchoDescription()
         checkNotificationPermission()
@@ -122,11 +146,7 @@ class MainActivity : AppCompatActivity() {
         // Register VPN state receiver
         Log.d(TAG, "onCreate: Registering ACTION_VPN_STOPPED receiver")
         val filter = android.content.IntentFilter(DtcVpnService.ACTION_VPN_STOPPED)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(vpnStateReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(vpnStateReceiver, filter)
-        }
+        registerReceiver(vpnStateReceiver, filter, RECEIVER_NOT_EXPORTED)
 
         // Auto-load app lists on startup (background thread)
         loadAppLists()
@@ -313,7 +333,14 @@ class MainActivity : AppCompatActivity() {
         tvEmptyState = findViewById(R.id.tv_empty_state)
         tvUdpResult = findViewById(R.id.tv_udp_result)
 
-        // Latency views
+        // Network configuration views
+        tabNetworkConfig = findViewById(R.id.tab_network_config)
+        llManualConfig = findViewById(R.id.ll_manual_config)
+        llPresetConfig = findViewById(R.id.ll_preset_config)
+        spinnerProfiles = findViewById(R.id.spinner_profiles)
+        btnConfigureProfiles = findViewById(R.id.btn_configure_profiles)
+
+        // Manual configuration views (latency sliders)
         tvOutboundLatency = findViewById(R.id.tv_outbound_latency)
         sliderOutboundLatency = findViewById(R.id.slider_outbound_latency)
         tvInboundLatency = findViewById(R.id.tv_inbound_latency)
@@ -562,7 +589,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun openSettings() {
         val intent = Intent(this, SettingsActivity::class.java)
-        startActivity(intent)
+        startActivityForResult(intent, SETTINGS_REQUEST_CODE)
     }
 
     /**
@@ -616,15 +643,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Handle VPN permission result
+     * Handle activity results (VPN permission, Settings)
      */
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == VPN_REQUEST_CODE) {
-            if (resultCode == RESULT_OK) {
-                startVpnService()
-            } else {
-                Toast.makeText(this, "VPN permission denied", Toast.LENGTH_SHORT).show()
+
+        when (requestCode) {
+            VPN_REQUEST_CODE -> {
+                if (resultCode == RESULT_OK) {
+                    startVpnService()
+                } else {
+                    Toast.makeText(this, "VPN permission denied", Toast.LENGTH_SHORT).show()
+                }
+            }
+            SETTINGS_REQUEST_CODE -> {
+                if (resultCode == RESULT_OK) {
+                    // Reload profiles
+                    profileManager = NetworkProfileManager(this)
+                    setupProfileSpinner()
+                    Toast.makeText(this, "Profiles reloaded", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -650,18 +688,39 @@ class MainActivity : AppCompatActivity() {
         serviceIntent.putExtra(EXTRA_SERVER_ADDRESS, serverAddress)
         serviceIntent.putExtra(EXTRA_SERVER_SECRET, serverSecret)
 
-        // Add current latency settings
-        val outboundMs = calculateLatency(sliderOutboundLatency?.value ?: 0f)
-        val inboundMs = calculateLatency(sliderInboundLatency?.value ?: 0f)
-        serviceIntent.putExtra(EXTRA_OUTBOUND_LATENCY, outboundMs)
-        serviceIntent.putExtra(EXTRA_INBOUND_LATENCY, inboundMs)
+        // Add network parameters (Manual or Preset)
+        val networkParams = when (currentNetworkConfigMode) {
+            0 -> {
+                // Manual mode: use sliders
+                val outbound = calculateLatency(sliderOutboundLatency?.value ?: 0f)
+                val inbound = calculateLatency(sliderInboundLatency?.value ?: 0f)
+                val loss = sliderPacketLoss?.value ?: 0f
+                val bandwidthPct = sliderBandwidth?.value ?: 0f
+                val bandwidth = calculateBandwidth(bandwidthPct)
+                NetworkParams(outbound, inbound, loss, bandwidth)
+            }
+            1 -> {
+                // Preset mode: use selected profile
+                val profile = profileManager?.getProfileByIndex(selectedProfileIndex)
+                if (profile != null) {
+                    val (out, in_) = profile.delay?.getEffectiveValues() ?: Pair(0, 0)
+                    val (lossUp, lossDown) = profile.loss?.getEffectiveValues() ?: Pair(0f, 0f)
+                    val avgLoss = (lossUp + lossDown) / 2f
+                    val (bwUp, bwDown) = profile.bandwidth?.getEffectiveValues() ?: Pair(0, 0)
+                    // Use average bandwidth for simplicity (could also use separate up/down)
+                    val avgBw = (bwUp + bwDown) / 2
+                    NetworkParams(out, in_, avgLoss, avgBw)
+                } else {
+                    NetworkParams(0, 0, 0f, 0)
+                }
+            }
+            else -> NetworkParams(0, 0, 0f, 0)
+        }
 
-        // Add packet loss and bandwidth settings
-        val lossPercent = sliderPacketLoss?.value ?: 0f
-        val bandwidthPercent = sliderBandwidth?.value ?: 0f
-        val bandwidthKbps = calculateBandwidth(bandwidthPercent)
-        serviceIntent.putExtra(EXTRA_PACKET_LOSS, lossPercent)
-        serviceIntent.putExtra(EXTRA_BANDWIDTH, bandwidthKbps)
+        serviceIntent.putExtra(EXTRA_OUTBOUND_LATENCY, networkParams.outboundLatency)
+        serviceIntent.putExtra(EXTRA_INBOUND_LATENCY, networkParams.inboundLatency)
+        serviceIntent.putExtra(EXTRA_PACKET_LOSS, networkParams.packetLoss)
+        serviceIntent.putExtra(EXTRA_BANDWIDTH, networkParams.bandwidth)
 
         startService(serviceIntent)
         isVpnRunning = true
@@ -948,10 +1007,113 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Setup Manual/Preset tabs for network configuration
+     */
+    private fun setupNetworkConfigTabs() {
+        // Add tabs
+        tabNetworkConfig?.addTab(tabNetworkConfig!!.newTab().setText(R.string.tab_manual))
+        tabNetworkConfig?.addTab(tabNetworkConfig!!.newTab().setText(R.string.tab_preset))
+
+        // Set tab selection listener
+        tabNetworkConfig?.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab?) {
+                val newMode = tab?.position ?: 0
+
+                // Check if VPN is running
+                if (isVpnRunning) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        R.string.cannot_change_tab_while_vpn_running,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    // Revert tab selection
+                    tabNetworkConfig?.selectTab(tabNetworkConfig?.getTabAt(currentNetworkConfigMode))
+                    return
+                }
+
+                currentNetworkConfigMode = newMode
+                updateNetworkConfigVisibility()
+            }
+
+            override fun onTabUnselected(tab: TabLayout.Tab?) {
+                // No action needed
+            }
+
+            override fun onTabReselected(tab: TabLayout.Tab?) {
+                // No action needed
+            }
+        })
+
+        // Select the first tab by default (Manual)
+        tabNetworkConfig?.selectTab(tabNetworkConfig?.getTabAt(0))
+        updateNetworkConfigVisibility()
+    }
+
+    /**
+     * Update visibility of Manual/Preset configuration views
+     */
+    private fun updateNetworkConfigVisibility() {
+        when (currentNetworkConfigMode) {
+            0 -> {
+                // Show Manual configuration
+                llManualConfig?.visibility = View.VISIBLE
+                llPresetConfig?.visibility = View.GONE
+            }
+            1 -> {
+                // Show Preset configuration
+                llManualConfig?.visibility = View.GONE
+                llPresetConfig?.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    /**
+     * Setup profile spinner for preset mode
+     */
+    private fun setupProfileSpinner() {
+        // Load profiles
+        val profiles = profileManager?.getAllProfiles() ?: emptyList()
+        val profileNames = profiles.map { it.name }
+
+        // Create adapter
+        val adapter = android.widget.ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            profileNames
+        )
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinnerProfiles?.adapter = adapter
+
+        // Set selection listener
+        spinnerProfiles?.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: View?,
+                position: Int,
+                id: Long
+            ) {
+                selectedProfileIndex = position
+                // Profile will be applied when VPN starts
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
+                // No action needed
+            }
+        }
+
+        // Configure Profiles button
+        btnConfigureProfiles?.setOnClickListener {
+            val intent = Intent(this, SettingsActivity::class.java)
+            startActivityForResult(intent, SETTINGS_REQUEST_CODE)
+        }
+    }
+
     companion object {
         private const val TAG = "MainActivity"
         private const val VPN_REQUEST_CODE = 1
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 2
+        private const val SETTINGS_REQUEST_CODE = 3
         private const val STATS_UPDATE_INTERVAL_MS = 1000 // 1 second
 
         // VPN Mode constants

@@ -2,16 +2,23 @@ package jp.muo.dtc_simulator
 
 import android.os.Bundle
 import android.util.Log
+import android.view.MenuItem
+import android.widget.Button
+import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 
 /**
- * SettingsActivity
+ * SettingsActivity - Configuration settings screen
  *
- * Server configuration settings screen
+ * Features:
+ * 1. Server configuration (address, secret) for Server Mode
+ * 2. Network profiles configuration (multiple YAML profiles)
  */
 class SettingsActivity : AppCompatActivity() {
     companion object {
@@ -19,44 +26,55 @@ class SettingsActivity : AppCompatActivity() {
         const val PREF_NETWORK_PROFILE = "network_profile"
     }
 
-    private var toolbar: MaterialToolbar? = null
+    private lateinit var profileManager: NetworkProfileManager
+
+    // Server configuration views
     private var etServerAddress: TextInputEditText? = null
     private var etServerSecret: TextInputEditText? = null
     private var btnSaveSettings: MaterialButton? = null
-    private var etNetworkProfile: TextInputEditText? = null
-    private var btnApplyProfile: MaterialButton? = null
-    private var btnClearProfile: MaterialButton? = null
+
+    // Network profiles views
+    private var etYamlConfig: EditText? = null
+    private var tvProfileCount: TextView? = null
+    private var btnSaveProfiles: Button? = null
+    private var btnResetProfiles: Button? = null
+    private var btnHelpProfiles: Button? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
 
-        initializeViews()
-        setupToolbar()
-        loadSettings()
-        setupSaveButton()
-        setupNetworkProfileButtons()
-    }
+        profileManager = NetworkProfileManager(this)
 
-    private fun initializeViews() {
-        toolbar = findViewById(R.id.toolbar)
-        etServerAddress = findViewById(R.id.et_server_address)
-        etServerSecret = findViewById(R.id.et_server_secret)
-        btnSaveSettings = findViewById(R.id.btn_save_settings)
-        etNetworkProfile = findViewById(R.id.et_network_profile)
-        btnApplyProfile = findViewById(R.id.btn_apply_profile)
-        btnClearProfile = findViewById(R.id.btn_clear_profile)
+        setupToolbar()
+        initViews()
+        loadSettings()
+        setupListeners()
     }
 
     private fun setupToolbar() {
+        val toolbar = findViewById<MaterialToolbar>(R.id.toolbar)
         setSupportActionBar(toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        toolbar?.setNavigationOnClickListener {
-            finish()
-        }
+        supportActionBar?.title = getString(R.string.settings_title)
+    }
+
+    private fun initViews() {
+        // Server configuration
+        etServerAddress = findViewById(R.id.et_server_address)
+        etServerSecret = findViewById(R.id.et_server_secret)
+        btnSaveSettings = findViewById(R.id.btn_save_settings)
+
+        // Network profiles
+        etYamlConfig = findViewById(R.id.et_yaml_config)
+        tvProfileCount = findViewById(R.id.tv_profile_count)
+        btnSaveProfiles = findViewById(R.id.btn_save_profiles)
+        btnResetProfiles = findViewById(R.id.btn_reset_profiles)
+        btnHelpProfiles = findViewById(R.id.btn_help_profiles)
     }
 
     private fun loadSettings() {
+        // Load server settings
         val prefs = getSharedPreferences(MainActivity.PREFS_NAME, MODE_PRIVATE)
 
         val savedAddress = prefs.getString(
@@ -72,18 +90,40 @@ class SettingsActivity : AppCompatActivity() {
         etServerAddress?.setText(savedAddress)
         etServerSecret?.setText(savedSecret)
 
-        // Load network profile
-        val savedProfile = prefs.getString(PREF_NETWORK_PROFILE, "") ?: ""
-        etNetworkProfile?.setText(savedProfile)
+        // Load network profiles
+        val savedYaml = profileManager.getSavedYamlText()
+        if (savedYaml != null) {
+            etYamlConfig?.setText(savedYaml)
+        } else {
+            // Show example with default profiles
+            val example = buildExampleYaml()
+            etYamlConfig?.setText(example)
+        }
+
+        updateProfileCount()
     }
 
-    private fun setupSaveButton() {
+    private fun setupListeners() {
+        // Server configuration
         btnSaveSettings?.setOnClickListener {
-            saveSettings()
+            saveServerSettings()
+        }
+
+        // Network profiles
+        btnSaveProfiles?.setOnClickListener {
+            saveProfilesConfiguration()
+        }
+
+        btnResetProfiles?.setOnClickListener {
+            showResetConfirmation()
+        }
+
+        btnHelpProfiles?.setOnClickListener {
+            showHelpDialog()
         }
     }
 
-    private fun saveSettings() {
+    private fun saveServerSettings() {
         val address = etServerAddress?.text?.toString()?.trim() ?: ""
         val secret = etServerSecret?.text?.toString()?.trim() ?: ""
 
@@ -120,62 +160,140 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
-        finish()
     }
 
-    private fun setupNetworkProfileButtons() {
-        btnApplyProfile?.setOnClickListener {
-            applyNetworkProfile()
-        }
+    private fun saveProfilesConfiguration() {
+        val yamlText = etYamlConfig?.text?.toString() ?: ""
 
-        btnClearProfile?.setOnClickListener {
-            clearNetworkProfile()
-        }
-    }
-
-    private fun applyNetworkProfile() {
-        val profileText = etNetworkProfile?.text?.toString()?.trim() ?: ""
-
-        if (profileText.isEmpty()) {
-            Toast.makeText(this, "Profile is empty", Toast.LENGTH_SHORT).show()
+        if (yamlText.isBlank()) {
+            Toast.makeText(this, "Configuration is empty", Toast.LENGTH_SHORT).show()
             return
         }
 
-        // Parse the network profile
-        val profile = NetworkProfileParser.parse(profileText)
-        if (profile == null) {
-            Toast.makeText(this, R.string.profile_parse_error, Toast.LENGTH_LONG).show()
-            return
+        val success = profileManager.loadFromYaml(yamlText)
+
+        if (success) {
+            updateProfileCount()
+            Toast.makeText(
+                this,
+                "Saved ${profileManager.getAllProfiles().size} profiles",
+                Toast.LENGTH_SHORT
+            ).show()
+            setResult(RESULT_OK)
+        } else {
+            Toast.makeText(
+                this,
+                "Failed to parse YAML. Please check format.",
+                Toast.LENGTH_LONG
+            ).show()
         }
-
-        // Save to SharedPreferences
-        val prefs = getSharedPreferences(MainActivity.PREFS_NAME, MODE_PRIVATE)
-        prefs.edit().putString(PREF_NETWORK_PROFILE, profileText).apply()
-
-        // Apply to running VPN service if available
-        val service = DtcVpnService.instance
-        if (service != null && service.isRunning) {
-            service.updateNetworkProfile(profile)
-            Log.i(TAG, "Applied network profile to running service")
-        }
-
-        Toast.makeText(this, R.string.profile_applied, Toast.LENGTH_SHORT).show()
     }
 
-    private fun clearNetworkProfile() {
-        etNetworkProfile?.setText("")
+    private fun showResetConfirmation() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Reset to Defaults")
+            .setMessage("This will reset all profiles to default values. Continue?")
+            .setPositiveButton("Reset") { _, _ ->
+                profileManager.resetToDefaults()
+                val example = buildExampleYaml()
+                etYamlConfig?.setText(example)
+                updateProfileCount()
+                Toast.makeText(this, "Reset to default profiles", Toast.LENGTH_SHORT).show()
+                setResult(RESULT_OK)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
-        // Clear from SharedPreferences
-        val prefs = getSharedPreferences(MainActivity.PREFS_NAME, MODE_PRIVATE)
-        prefs.edit().remove(PREF_NETWORK_PROFILE).apply()
+    private fun showHelpDialog() {
+        val helpText = """
+            |YAML Configuration Format:
+            |
+            |- name: "Profile Name"
+            |  delay:
+            |    value: 100
+            |    # OR use up/down split:
+            |    # up: 70
+            |    # down: 50
+            |    # OR use percentiles:
+            |    # p25: 90
+            |    # p50: 145
+            |    # p90: 475
+            |  loss: 5.0
+            |  bandwidth: 1024
+            |
+            |Multiple profiles:
+            |- name: "Profile 1"
+            |  delay: 100
+            |  loss: 2.0
+            |
+            |- name: "Profile 2"
+            |  delay: 200
+            |  loss: 5.0
+            |
+            |Units:
+            |- delay: milliseconds (ms)
+            |- loss: percentage (0-100)
+            |- bandwidth: kilobits/sec (kbps)
+        """.trimMargin()
 
-        // Clear from running VPN service if available
-        val service = DtcVpnService.instance
-        if (service != null && service.isRunning) {
-            service.updateNetworkProfile(null)
-            Log.i(TAG, "Cleared network profile from running service")
+        MaterialAlertDialogBuilder(this)
+            .setTitle("YAML Format Help")
+            .setMessage(helpText)
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
+    private fun updateProfileCount() {
+        val count = profileManager.getAllProfiles().size
+        tvProfileCount?.text = "$count profile(s) loaded"
+    }
+
+    private fun buildExampleYaml(): String {
+        val defaults = NetworkProfileManager.getDefaultProfiles()
+        val sb = StringBuilder()
+
+        for (profile in defaults) {
+            sb.append("- name: \"${profile.name}\"\n")
+
+            profile.delay?.let { delay ->
+                sb.append("  delay:\n")
+                delay.value?.let { sb.append("    value: $it\n") }
+                delay.up?.let { sb.append("    up: $it\n") }
+                delay.down?.let { sb.append("    down: $it\n") }
+                delay.p25?.let { sb.append("    p25: ${it.value ?: 0}\n") }
+                delay.p50?.let { sb.append("    p50: ${it.value ?: 0}\n") }
+                delay.p90?.let { sb.append("    p90: ${it.value ?: 0}\n") }
+                delay.p95?.let { sb.append("    p95: ${it.value ?: 0}\n") }
+            }
+
+            profile.loss?.let { loss ->
+                loss.value?.let { sb.append("  loss: $it\n") }
+            }
+
+            profile.bandwidth?.let { bw ->
+                if (bw.up != null && bw.down != null) {
+                    sb.append("  bandwidth:\n")
+                    sb.append("    up: ${bw.up}\n")
+                    sb.append("    down: ${bw.down}\n")
+                } else {
+                    bw.value?.let { sb.append("  bandwidth: $it\n") }
+                }
+            }
+
+            sb.append("\n")
         }
 
-        Toast.makeText(this, R.string.profile_cleared, Toast.LENGTH_SHORT).show()
+        return sb.toString()
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            android.R.id.home -> {
+                finish()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
     }
 }

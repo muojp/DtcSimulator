@@ -145,11 +145,12 @@ object NetworkProfileParser {
      * Build NetworkProfile from parsed map
      */
     private fun buildNetworkProfile(map: Map<String, Any>): NetworkProfile {
+        val name = map["name"] as? String ?: "Custom Profile"
         val delayConfig = map["delay"]?.let { parseDelayConfig(it) }
         val lossConfig = map["loss"]?.let { parseLossConfig(it) }
         val bandwidthConfig = map["bandwidth"]?.let { parseBandwidthConfig(it) }
 
-        return NetworkProfile(delayConfig, lossConfig, bandwidthConfig)
+        return NetworkProfile(name, delayConfig, lossConfig, bandwidthConfig)
     }
 
     /**
