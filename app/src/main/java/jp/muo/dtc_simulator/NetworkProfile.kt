@@ -67,6 +67,97 @@ data class NetworkProfile(
         }
 
         /**
+         * Sample a delay value from the percentile distribution
+         * Uses linear interpolation between percentile points
+         * Returns Pair(upMs, downMs)
+         */
+        fun sampleFromDistribution(random: kotlin.random.Random = kotlin.random.Random.Default): Pair<Int, Int> {
+            if (!hasPercentiles()) {
+                return getEffectiveValues()
+            }
+
+            // Generate a random percentile (0-100)
+            val percentile = random.nextDouble(0.0, 100.0)
+
+            // Sample uplink and downlink separately
+            val upMs = sampleSingleDirection(percentile, isUplink = true)
+            val downMs = sampleSingleDirection(percentile, isUplink = false)
+
+            return Pair(upMs, downMs)
+        }
+
+        /**
+         * Sample delay for a single direction using percentile interpolation
+         */
+        private fun sampleSingleDirection(percentile: Double, isUplink: Boolean): Int {
+            // Build percentile map for the direction
+            val percentiles = mutableMapOf<Double, Int>()
+
+            p25?.let {
+                val v = if (isUplink) (it.up ?: it.value) else (it.down ?: it.value)
+                v?.let { percentiles[25.0] = it }
+            }
+            p50?.let {
+                val v = if (isUplink) (it.up ?: it.value) else (it.down ?: it.value)
+                v?.let { percentiles[50.0] = it }
+            }
+            p90?.let {
+                val v = if (isUplink) (it.up ?: it.value) else (it.down ?: it.value)
+                v?.let { percentiles[90.0] = it }
+            }
+            p95?.let {
+                val v = if (isUplink) (it.up ?: it.value) else (it.down ?: it.value)
+                v?.let { percentiles[95.0] = it }
+            }
+
+            if (percentiles.isEmpty()) return 0
+
+            // If only one percentile, return it
+            if (percentiles.size == 1) return percentiles.values.first()
+
+            val sortedPercentiles = percentiles.toSortedMap()
+
+            // Below minimum percentile: extrapolate down to 0
+            val minP = sortedPercentiles.firstKey()
+            if (percentile < minP) {
+                val minValue = sortedPercentiles[minP]!!
+                // Linear extrapolation from 0 at 0th percentile to minValue at minP
+                return (minValue * percentile / minP).toInt()
+            }
+
+            // Above maximum percentile: extrapolate up
+            val maxP = sortedPercentiles.lastKey()
+            if (percentile > maxP) {
+                val maxValue = sortedPercentiles[maxP]!!
+                // Extrapolate: assume same rate of increase continues
+                val range = maxValue - sortedPercentiles[sortedPercentiles.keys.elementAt(sortedPercentiles.size - 2)]!!
+                val pRange = maxP - sortedPercentiles.keys.elementAt(sortedPercentiles.size - 2)
+                return (maxValue + range * (percentile - maxP) / pRange).toInt()
+            }
+
+            // Interpolate between two percentiles
+            var lowerP = 0.0
+            var lowerValue = 0
+            for ((p, v) in sortedPercentiles) {
+                if (p <= percentile) {
+                    lowerP = p
+                    lowerValue = v
+                } else {
+                    // Found upper bound
+                    val upperP = p
+                    val upperValue = v
+
+                    // Linear interpolation
+                    val fraction = (percentile - lowerP) / (upperP - lowerP)
+                    return (lowerValue + fraction * (upperValue - lowerValue)).toInt()
+                }
+            }
+
+            // Should not reach here, but return max value as fallback
+            return sortedPercentiles.values.last()
+        }
+
+        /**
          * Check if percentile distribution is configured
          */
         fun hasPercentiles(): Boolean {
