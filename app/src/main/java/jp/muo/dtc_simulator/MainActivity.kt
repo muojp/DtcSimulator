@@ -114,6 +114,7 @@ class MainActivity : AppCompatActivity() {
                 Log.d(TAG, "Received ACTION_VPN_STOPPED broadcast")
                 isVpnRunning = false
                 updateVpnButton()
+                updateNetworkConfigTabsEnabled()
                 stopStatsUpdates()
             }
         }
@@ -635,9 +636,10 @@ class MainActivity : AppCompatActivity() {
         val serviceIntent = Intent(this, DtcVpnService::class.java)
         val stopped = stopService(serviceIntent)
         Log.d(TAG, "stopService returned: $stopped")
-        
+
         isVpnRunning = false
         updateVpnButton()
+        updateNetworkConfigTabsEnabled()
         stopStatsUpdates()
         Toast.makeText(this, R.string.vpn_stopped, Toast.LENGTH_SHORT).show()
     }
@@ -725,6 +727,7 @@ class MainActivity : AppCompatActivity() {
         startService(serviceIntent)
         isVpnRunning = true
         updateVpnButton()
+        updateNetworkConfigTabsEnabled()
         startStatsUpdates()
         Toast.makeText(this, R.string.vpn_running, Toast.LENGTH_SHORT).show()
     }
@@ -1018,21 +1021,7 @@ class MainActivity : AppCompatActivity() {
         // Set tab selection listener
         tabNetworkConfig?.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab?) {
-                val newMode = tab?.position ?: 0
-
-                // Check if VPN is running
-                if (isVpnRunning) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        R.string.cannot_change_tab_while_vpn_running,
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    // Revert tab selection
-                    tabNetworkConfig?.selectTab(tabNetworkConfig?.getTabAt(currentNetworkConfigMode))
-                    return
-                }
-
-                currentNetworkConfigMode = newMode
+                currentNetworkConfigMode = tab?.position ?: 0
                 updateNetworkConfigVisibility()
             }
 
@@ -1064,6 +1053,17 @@ class MainActivity : AppCompatActivity() {
                 // Show Preset configuration
                 llManualConfig?.visibility = View.GONE
                 llPresetConfig?.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    /**
+     * Update network config tabs enabled state based on VPN status
+     */
+    private fun updateNetworkConfigTabsEnabled() {
+        tabNetworkConfig?.let { tabLayout ->
+            for (i in 0 until tabLayout.tabCount) {
+                tabLayout.getTabAt(i)?.view?.isEnabled = !isVpnRunning
             }
         }
     }

@@ -2,6 +2,7 @@ package jp.muo.dtc_simulator
 
 import android.content.Context
 import android.util.Log
+import org.yaml.snakeyaml.Yaml
 
 /**
  * NetworkProfileManager - Manages multiple network simulation profiles
@@ -39,34 +40,37 @@ class NetworkProfileManager(private val context: Context) {
                 NetworkProfile(
                     name = "LEO Satellite (Starlink-like)",
                     delay = NetworkProfile.DelayConfig(
-                        p25 = NetworkProfile.PercentileValue(value = 20),
-                        p50 = NetworkProfile.PercentileValue(value = 40),
-                        p90 = NetworkProfile.PercentileValue(value = 80),
-                        p95 = NetworkProfile.PercentileValue(value = 120)
+                        p25 = NetworkProfile.PercentileValue(up = 60, down = 30),
+                        p50 = NetworkProfile.PercentileValue(up = 80, down = 65),
+                        p90 = NetworkProfile.PercentileValue(up = 300, down = 175),
+                        p95 = NetworkProfile.PercentileValue(up = 350, down = 240)
                     ),
-                    loss = NetworkProfile.LossConfig(value = 1.0f),
-                    bandwidth = NetworkProfile.BandwidthConfig(
-                        up = 10240,  // 10 Mbps
-                        down = 102400  // 100 Mbps
-                    )
+                    loss = NetworkProfile.LossConfig(up = 5.0f, down = 4.0f),
+                    bandwidth = NetworkProfile.BandwidthConfig(up = 3072, down = 5120)
                 ),
                 NetworkProfile(
                     name = "GEO Satellite",
                     delay = NetworkProfile.DelayConfig(value = 600),
                     loss = NetworkProfile.LossConfig(value = 3.0f),
-                    bandwidth = NetworkProfile.BandwidthConfig(value = 512)  // 512 kbps
+                    bandwidth = NetworkProfile.BandwidthConfig(value = 512)
                 ),
                 NetworkProfile(
                     name = "3G Mobile",
                     delay = NetworkProfile.DelayConfig(value = 200),
                     loss = NetworkProfile.LossConfig(value = 5.0f),
-                    bandwidth = NetworkProfile.BandwidthConfig(value = 384)  // 384 kbps
+                    bandwidth = NetworkProfile.BandwidthConfig(value = 768)
                 ),
                 NetworkProfile(
                     name = "Edge Network",
                     delay = NetworkProfile.DelayConfig(value = 50),
                     loss = NetworkProfile.LossConfig(value = 2.0f),
-                    bandwidth = NetworkProfile.BandwidthConfig(value = 5120)  // 5 Mbps
+                    bandwidth = NetworkProfile.BandwidthConfig(value = 128)
+                ),
+                NetworkProfile(
+                    name = "Flets",
+                    delay = NetworkProfile.DelayConfig(value = 0),
+                    loss = NetworkProfile.LossConfig(value = 0f),
+                    bandwidth = NetworkProfile.BandwidthConfig(value = 128000)
                 )
             )
         }
@@ -133,101 +137,36 @@ class NetworkProfileManager(private val context: Context) {
     }
 
     /**
-     * Parse YAML-like text into NetworkProfile list
+     * Parse YAML text into NetworkProfile list using SnakeYAML
      */
     private fun parseYaml(text: String): List<NetworkProfile> {
-        val result = mutableListOf<NetworkProfile>()
-        val lines = text.lines()
+        return try {
+            val yaml = Yaml()
+            val data = yaml.load<Any>(text)
 
-        var currentProfile: MutableMap<String, Any>? = null
-        var currentSection: String? = null
-        var indentLevel = 0
-
-        for (line in lines) {
-            val trimmed = line.trim()
-
-            // Skip empty lines and comments
-            if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
-
-            // Detect indent level
-            val currentIndent = line.takeWhile { it == ' ' || it == '\t' }.length
-
-            // New profile marker
-            if (trimmed.startsWith("-") && currentIndent == 0) {
-                // Save previous profile
-                if (currentProfile != null) {
-                    result.add(buildProfile(currentProfile))
-                }
-                currentProfile = mutableMapOf()
-                currentSection = null
-
-                // Check if inline name after dash
-                val afterDash = trimmed.substring(1).trim()
-                if (afterDash.startsWith("name:")) {
-                    val name = afterDash.substring(5).trim().removeSurrounding("\"", "'")
-                    currentProfile["name"] = name
-                }
-                continue
-            }
-
-            if (currentProfile == null && currentIndent == 0) {
-                // Start first profile implicitly
-                currentProfile = mutableMapOf()
-            }
-
-            if (currentProfile == null) continue
-
-            // Parse key-value pairs
-            if (trimmed.contains(":")) {
-                val parts = trimmed.split(":", limit = 2)
-                val key = parts[0].trim()
-                val value = parts.getOrNull(1)?.trim() ?: ""
-
-                when {
-                    // Top-level keys
-                    currentIndent <= 2 && key in listOf("name", "delay", "loss", "bandwidth") -> {
-                        if (value.isNotEmpty() && !value.startsWith("{")) {
-                            // Inline value
-                            currentProfile[key] = parseValue(value)
-                            currentSection = null
-                        } else {
-                            // Section header
-                            currentSection = key
-                            if (!currentProfile.containsKey(key)) {
-                                currentProfile[key] = mutableMapOf<String, Any>()
-                            }
-                        }
-                    }
-                    // Nested keys within a section
-                    currentSection != null && currentIndent > 2 -> {
-                        val sectionMap = currentProfile[currentSection] as? MutableMap<String, Any>
-                        if (sectionMap != null) {
-                            sectionMap[key] = parseValue(value)
+            when (data) {
+                // YAML array of profiles
+                is List<*> -> {
+                    data.mapNotNull { item ->
+                        (item as? Map<*, *>)?.let { map ->
+                            @Suppress("UNCHECKED_CAST")
+                            buildProfile(map.mapKeys { it.key.toString() } as Map<String, Any>)
                         }
                     }
                 }
+                // Single profile object
+                is Map<*, *> -> {
+                    @Suppress("UNCHECKED_CAST")
+                    listOf(buildProfile(data.mapKeys { it.key.toString() } as Map<String, Any>))
+                }
+                else -> {
+                    Log.e(TAG, "Unexpected YAML structure: ${data?.javaClass}")
+                    emptyList()
+                }
             }
-        }
-
-        // Save last profile
-        if (currentProfile != null) {
-            result.add(buildProfile(currentProfile))
-        }
-
-        return result
-    }
-
-    /**
-     * Parse string value to appropriate type
-     */
-    private fun parseValue(value: String): Any {
-        val clean = value.removeSurrounding("\"", "'").trim()
-
-        return when {
-            clean.isEmpty() -> ""
-            clean.toIntOrNull() != null -> clean.toInt()
-            clean.toFloatOrNull() != null -> clean.toFloat()
-            else -> clean
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse YAML", e)
+            emptyList()
         }
     }
 

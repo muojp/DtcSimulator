@@ -212,24 +212,28 @@ class SettingsActivity : AppCompatActivity() {
             |- name: "Profile Name"
             |  delay:
             |    value: 100
-            |    # OR use up/down split:
-            |    # up: 70
-            |    # down: 50
-            |    # OR use percentiles:
-            |    # p25: 90
-            |    # p50: 145
-            |    # p90: 475
+            |    # OR use up/down split (compact):
+            |    # p50: {up: 80, down: 65}
+            |    # p90: {up: 300, down: 175}
             |  loss: 5.0
+            |  # OR split by direction:
+            |  # loss: {up: 5.0, down: 4.0}
             |  bandwidth: 1024
+            |  # OR split by direction:
+            |  # bandwidth: {up: 3072, down: 5120}
             |
             |Multiple profiles:
             |- name: "Profile 1"
-            |  delay: 100
+            |  delay:
+            |    value: 100
             |  loss: 2.0
+            |  bandwidth: 512
             |
             |- name: "Profile 2"
-            |  delay: 200
-            |  loss: 5.0
+            |  delay:
+            |    p50: {up: 200, down: 150}
+            |  loss: {up: 5.0, down: 3.0}
+            |  bandwidth: 1024
             |
             |Units:
             |- delay: milliseconds (ms)
@@ -261,21 +265,48 @@ class SettingsActivity : AppCompatActivity() {
                 delay.value?.let { sb.append("    value: $it\n") }
                 delay.up?.let { sb.append("    up: $it\n") }
                 delay.down?.let { sb.append("    down: $it\n") }
-                delay.p25?.let { sb.append("    p25: ${it.value ?: 0}\n") }
-                delay.p50?.let { sb.append("    p50: ${it.value ?: 0}\n") }
-                delay.p90?.let { sb.append("    p90: ${it.value ?: 0}\n") }
-                delay.p95?.let { sb.append("    p95: ${it.value ?: 0}\n") }
+                // Percentiles with compact format for up/down
+                delay.p25?.let {
+                    if (it.up != null && it.down != null) {
+                        sb.append("    p25: {up: ${it.up}, down: ${it.down}}\n")
+                    } else {
+                        sb.append("    p25: ${it.value ?: 0}\n")
+                    }
+                }
+                delay.p50?.let {
+                    if (it.up != null && it.down != null) {
+                        sb.append("    p50: {up: ${it.up}, down: ${it.down}}\n")
+                    } else {
+                        sb.append("    p50: ${it.value ?: 0}\n")
+                    }
+                }
+                delay.p90?.let {
+                    if (it.up != null && it.down != null) {
+                        sb.append("    p90: {up: ${it.up}, down: ${it.down}}\n")
+                    } else {
+                        sb.append("    p90: ${it.value ?: 0}\n")
+                    }
+                }
+                delay.p95?.let {
+                    if (it.up != null && it.down != null) {
+                        sb.append("    p95: {up: ${it.up}, down: ${it.down}}\n")
+                    } else {
+                        sb.append("    p95: ${it.value ?: 0}\n")
+                    }
+                }
             }
 
             profile.loss?.let { loss ->
-                loss.value?.let { sb.append("  loss: $it\n") }
+                if (loss.up != null && loss.down != null) {
+                    sb.append("  loss: {up: ${loss.up}, down: ${loss.down}}\n")
+                } else {
+                    loss.value?.let { sb.append("  loss: $it\n") }
+                }
             }
 
             profile.bandwidth?.let { bw ->
                 if (bw.up != null && bw.down != null) {
-                    sb.append("  bandwidth:\n")
-                    sb.append("    up: ${bw.up}\n")
-                    sb.append("    down: ${bw.down}\n")
+                    sb.append("  bandwidth: {up: ${bw.up}, down: ${bw.down}}\n")
                 } else {
                     bw.value?.let { sb.append("  bandwidth: $it\n") }
                 }

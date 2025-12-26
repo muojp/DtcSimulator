@@ -14,9 +14,20 @@ DtcSimulatorは、Android VPN Service APIを活用した通信フィルタリン
 - **レイテンシーシミュレーション** ✅ **実装済み**
     - 上り（Outbound）/下り（Inbound）独立設定
     - 指数スケールUI（0ms, 10ms, 100ms, 1000ms, 10000ms）
+- **パケットロス再現** ✅ **実装済み**
+    - パケットロス率の設定（0-100%）
+    - ランダムパケットドロップ
 - スループット制限 ⏳ 未実装
-- パケットロス再現 ⏳ 未実装
 - `PacketDelayManager` によるパケットバッファリングと遅延送出
+
+### Phase 3: ネットワークプロファイル管理 ✅ **実装済み**
+- **マニュアル/プリセット切り替えUI**
+    - マニュアルモード: スライダーで個別パラメータ設定
+    - プリセットモード: YAML定義済みプロファイルから選択
+- **YAMLベースのプロファイル定義**
+    - SnakeYAML 2.2 による標準YAML解析
+    - 複数プロファイルの保存・管理
+    - デフォルトプロファイル: LEO/GEO Satellite, 3G Mobile, Edge Network
 
 ## アーキテクチャ設計
 
@@ -31,8 +42,12 @@ DtcSimulator/
 ├── PacketDelayManager (遅延シミュレーション)
 │   └── PriorityBlockingQueue によるタイムスタンプ管理
 ├── AllowlistManager (アプリケーション検出)
+├── NetworkProfileManager (プロファイル管理)
+│   ├── YAML解析 (SnakeYAML 2.2)
+│   └── SharedPreferences永続化
 ├── UI Layer
 │   ├── MainActivity (接続制御・パラメータ設定)
+│   ├── SettingsActivity (サーバー設定・プロファイル編集)
 │   └── AllowedAppsAdapter (アプリリスト表示)
 └── Statistics
     └── VpnStats (トラフィック統計)
@@ -57,11 +72,18 @@ UIスライダー（0-100%）からミリ秒への変換には以下の指数関
 4. ✅ UIでの許可アプリ表示
 5. ✅ Android 14/15対応
 
-### Phase 2: ネットワークシミュレーション
+### Phase 2: ネットワークシミュレーション ✅ 完了
 1. ✅ レイテンシーシミュレーション（上下別設定）
-2. ⏳ パケットロス実装
-3. ⏳ スループット制限
+2. ✅ パケットロス実装
+3. ⏳ スループット制限（UIのみ実装、実効制限は未実装）
 4. ✅ 統計情報の収集と表示
+
+### Phase 3: プロファイル管理 ✅ 完了
+1. ✅ ネットワークプロファイルデータモデル定義
+2. ✅ YAML形式でのプロファイル記述（SnakeYAML統合）
+3. ✅ マニュアル/プリセット切り替えUI実装
+4. ✅ プロファイル設定画面（SettingsActivity拡張）
+5. ✅ デフォルトプロファイルの提供
 
 ## 開発環境
 - **最小SDK**: API 21 (Android 5.0)
@@ -81,5 +103,5 @@ adb logcat | grep -E "DtcVpnService|ServerVpnConnection|LocalVpnConnection|Packe
 ```
 
 ---
-**Last Updated**: 2025-12-22
-**Version**: 0.3.0-alpha (Phase 2 Latency Implemented)
+**Last Updated**: 2025-12-26
+**Version**: 0.4.0-alpha (Phase 3 Network Profiles with SnakeYAML)
