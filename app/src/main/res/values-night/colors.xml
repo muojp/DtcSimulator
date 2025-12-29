@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark Theme Colors - Material Design 3 compliant with WCAG AA contrast -->
+
+    <!-- Primary colors (Lighter blue for dark backgrounds) -->
+    <color name="primary_light">#FF64B5F6</color>          <!-- Blue 300 - Good contrast on dark -->
+    <color name="primary_variant_light">#FF42A5F5</color>  <!-- Blue 400 -->
+    <color name="on_primary_light">#FF000000</color>       <!-- Black text on bright primary -->
+
+    <!-- Secondary colors (Lighter orange for dark backgrounds) -->
+    <color name="secondary_light">#FFFFB74D</color>        <!-- Orange 300 -->
+    <color name="secondary_variant_light">#FFFFA726</color><!-- Orange 400 -->
+    <color name="on_secondary_light">#FF000000</color>     <!-- Black text on bright secondary -->
+
+    <!-- Background colors (Dark theme) -->
+    <color name="background_light">#FF121212</color>       <!-- Material dark background -->
+    <color name="surface_light">#FF1E1E1E</color>          <!-- Slightly lighter for cards -->
+    <color name="on_background_light">#FFE0E0E0</color>    <!-- Light gray text -->
+    <color name="on_surface_light">#FFE0E0E0</color>       <!-- Light gray text -->
+
+    <!-- Error colors -->
+    <color name="error_light">#FFEF5350</color>            <!-- Red 400 - Lighter for dark theme -->
+    <color name="on_error_light">#FF000000</color>         <!-- Black text -->
+
+    <!-- Semantic colors for status indication -->
+    <color name="success_light">#FF66BB6A</color>          <!-- Green 400 -->
+    <color name="warning_light">#FFFFB74D</color>          <!-- Orange 300 -->
+    <color name="info_light">#FF64B5F6</color>             <!-- Blue 300 -->
+
+    <!-- Surface variants -->
+    <color name="surface_variant_light">#FF2C2C2C</color>  <!-- Lighter gray for elevated cards -->
+    <color name="on_surface_variant_light">#FFB0B0B0</color><!-- Medium gray text -->
+
+    <!-- Outline and dividers -->
+    <color name="outline_light">#FF3C3C3C</color>          <!-- Dark gray outline -->
+    <color name="divider_light">#FF3C3C3C</color>          <!-- Dark gray divider -->
+
+    <!-- Badge colors with high contrast -->
+    <color name="badge_background_light">#FF64B5F6</color> <!-- Blue 300 -->
+    <color name="badge_text_light">#FF000000</color>       <!-- Black -->
+
+    <!-- Status-specific colors for dark theme -->
+    <color name="vpn_active_dark">#FF66BB6A</color>        <!-- Green 400 -->
+    <color name="vpn_inactive_dark">#FFEF5350</color>      <!-- Red 400 -->
+</resources>

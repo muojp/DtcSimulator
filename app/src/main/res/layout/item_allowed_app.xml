@@ -62,7 +62,7 @@
                     android:layout_marginStart="8dp"
                     android:text="SYSTEM"
                     android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
-                    android:textColor="@android:color/white"
+                    android:textColor="?attr/colorOnPrimary"
                     android:background="?attr/colorPrimaryVariant"
                     android:paddingStart="6dp"
                     android:paddingEnd="6dp"
