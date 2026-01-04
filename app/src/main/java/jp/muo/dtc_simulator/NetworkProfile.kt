@@ -34,7 +34,6 @@ data class NetworkProfile(
      * - Percentile distribution: delay: { p25: 90, p50: 145, p90: 475, p95: 590 }
      */
     data class DelayConfig(
-        val value: Int? = null,  // Single value (ms)
         val up: Int? = null,     // Uplink delay (ms)
         val down: Int? = null,   // Downlink delay (ms)
         val p25: PercentileValue? = null,  // 25th percentile
@@ -42,6 +41,17 @@ data class NetworkProfile(
         val p90: PercentileValue? = null,  // 90th percentile
         val p95: PercentileValue? = null   // 95th percentile
     ) {
+        companion object {
+            /**
+             * Create DelayConfig from a single value (60/40 split)
+             */
+            fun fromValue(value: Int): DelayConfig {
+                val upMs = (value * 0.6).toInt()
+                val downMs = (value * 0.4).toInt()
+                return DelayConfig(up = upMs, down = downMs)
+            }
+        }
+
         /**
          * Get effective uplink and downlink delays
          * Returns Pair(upMs, downMs)
@@ -50,13 +60,6 @@ data class NetworkProfile(
             return when {
                 // Explicit up/down values take priority
                 up != null && down != null -> Pair(up, down)
-
-                // Single value: distribute as 60% up, 40% down
-                value != null -> {
-                    val upMs = (value * 0.6).toInt()
-                    val downMs = (value * 0.4).toInt()
-                    Pair(upMs, downMs)
-                }
 
                 // Use percentile median (p50) if available, otherwise p25
                 p50 != null -> p50.getEffectiveValues()

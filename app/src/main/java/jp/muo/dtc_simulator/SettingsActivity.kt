@@ -261,37 +261,47 @@ class SettingsActivity : AppCompatActivity() {
             sb.append("- name: \"${profile.name}\"\n")
 
             profile.delay?.let { delay ->
-                sb.append("  delay:\n")
-                delay.value?.let { sb.append("    value: $it\n") }
-                delay.up?.let { sb.append("    up: $it\n") }
-                delay.down?.let { sb.append("    down: $it\n") }
-                // Percentiles with compact format for up/down
-                delay.p25?.let {
-                    if (it.up != null && it.down != null) {
-                        sb.append("    p25: {up: ${it.up}, down: ${it.down}}\n")
-                    } else {
-                        sb.append("    p25: ${it.value ?: 0}\n")
+                if (delay.hasPercentiles()) {
+                    // Percentile distribution format
+                    sb.append("  delay:\n")
+                    delay.p25?.let {
+                        if (it.up != null && it.down != null) {
+                            sb.append("    p25: {up: ${it.up}, down: ${it.down}}\n")
+                        } else {
+                            sb.append("    p25: ${it.value ?: 0}\n")
+                        }
                     }
-                }
-                delay.p50?.let {
-                    if (it.up != null && it.down != null) {
-                        sb.append("    p50: {up: ${it.up}, down: ${it.down}}\n")
-                    } else {
-                        sb.append("    p50: ${it.value ?: 0}\n")
+                    delay.p50?.let {
+                        if (it.up != null && it.down != null) {
+                            sb.append("    p50: {up: ${it.up}, down: ${it.down}}\n")
+                        } else {
+                            sb.append("    p50: ${it.value ?: 0}\n")
+                        }
                     }
-                }
-                delay.p90?.let {
-                    if (it.up != null && it.down != null) {
-                        sb.append("    p90: {up: ${it.up}, down: ${it.down}}\n")
-                    } else {
-                        sb.append("    p90: ${it.value ?: 0}\n")
+                    delay.p90?.let {
+                        if (it.up != null && it.down != null) {
+                            sb.append("    p90: {up: ${it.up}, down: ${it.down}}\n")
+                        } else {
+                            sb.append("    p90: ${it.value ?: 0}\n")
+                        }
                     }
-                }
-                delay.p95?.let {
-                    if (it.up != null && it.down != null) {
-                        sb.append("    p95: {up: ${it.up}, down: ${it.down}}\n")
+                    delay.p95?.let {
+                        if (it.up != null && it.down != null) {
+                            sb.append("    p95: {up: ${it.up}, down: ${it.down}}\n")
+                        } else {
+                            sb.append("    p95: ${it.value ?: 0}\n")
+                        }
+                    }
+                } else if (delay.up != null && delay.down != null) {
+                    // Simple delay: try to output as single value if it's 60/40 split
+                    val totalMs = (delay.up / 0.6).toInt()
+                    val expectedDown = (totalMs * 0.4).toInt()
+                    if (expectedDown == delay.down) {
+                        // Output as simple value
+                        sb.append("  delay: $totalMs\n")
                     } else {
-                        sb.append("    p95: ${it.value ?: 0}\n")
+                        // Output as up/down map
+                        sb.append("  delay: {up: ${delay.up}, down: ${delay.down}}\n")
                     }
                 }
             }

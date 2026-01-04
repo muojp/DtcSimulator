@@ -50,25 +50,25 @@ class NetworkProfileManager(private val context: Context) {
                 ),
                 NetworkProfile(
                     name = "GEO Satellite",
-                    delay = NetworkProfile.DelayConfig(value = 600),
+                    delay = NetworkProfile.DelayConfig.fromValue(600),
                     loss = NetworkProfile.LossConfig(value = 3.0f),
                     bandwidth = NetworkProfile.BandwidthConfig(value = 512)
                 ),
                 NetworkProfile(
                     name = "3G Mobile",
-                    delay = NetworkProfile.DelayConfig(value = 200),
+                    delay = NetworkProfile.DelayConfig.fromValue(200),
                     loss = NetworkProfile.LossConfig(value = 5.0f),
                     bandwidth = NetworkProfile.BandwidthConfig(value = 768)
                 ),
                 NetworkProfile(
                     name = "Edge Network",
-                    delay = NetworkProfile.DelayConfig(value = 50),
+                    delay = NetworkProfile.DelayConfig.fromValue(50),
                     loss = NetworkProfile.LossConfig(value = 2.0f),
                     bandwidth = NetworkProfile.BandwidthConfig(value = 128)
                 ),
                 NetworkProfile(
                     name = "Flets",
-                    delay = NetworkProfile.DelayConfig(value = 0),
+                    delay = NetworkProfile.DelayConfig.fromValue(0),
                     loss = NetworkProfile.LossConfig(value = 0f),
                     bandwidth = NetworkProfile.BandwidthConfig(value = 128000)
                 )
@@ -178,7 +178,6 @@ class NetworkProfileManager(private val context: Context) {
 
         val delay = (map["delay"] as? Map<*, *>)?.let { delayMap ->
             NetworkProfile.DelayConfig(
-                value = delayMap["value"] as? Int,
                 up = delayMap["up"] as? Int,
                 down = delayMap["down"] as? Int,
                 p25 = parsePercentile(delayMap["p25"]),
@@ -186,7 +185,12 @@ class NetworkProfileManager(private val context: Context) {
                 p90 = parsePercentile(delayMap["p90"]),
                 p95 = parsePercentile(delayMap["p95"])
             )
-        } ?: (map["delay"] as? Int)?.let { NetworkProfile.DelayConfig(value = it) }
+        } ?: (map["delay"] as? Int)?.let {
+            // Convert single value to up/down split (60/40)
+            val upMs = (it * 0.6).toInt()
+            val downMs = (it * 0.4).toInt()
+            NetworkProfile.DelayConfig(up = upMs, down = downMs)
+        }
 
         val loss = (map["loss"] as? Map<*, *>)?.let { lossMap ->
             NetworkProfile.LossConfig(
