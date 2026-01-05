@@ -20,7 +20,7 @@ class PacketProcessorProfileUpdateTest {
         // Set initial profile with no packet loss
         val noLossProfile = NetworkProfile(
             name = "No Loss",
-            delay = NetworkProfile.DelayConfig(value = 0),
+            delay = NetworkProfile.DelayConfig.fromValue(0),
             loss = NetworkProfile.LossConfig(value = 0.0f),
             bandwidth = NetworkProfile.BandwidthConfig(value = 0)
         )
@@ -54,7 +54,7 @@ class PacketProcessorProfileUpdateTest {
         // Update to high loss profile
         val highLossProfile = NetworkProfile(
             name = "High Loss",
-            delay = NetworkProfile.DelayConfig(value = 0),
+            delay = NetworkProfile.DelayConfig.fromValue(0),
             loss = NetworkProfile.LossConfig(up = 50.0f, down = 50.0f),
             bandwidth = NetworkProfile.BandwidthConfig(value = 0)
         )
