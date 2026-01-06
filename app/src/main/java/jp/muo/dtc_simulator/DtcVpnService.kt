@@ -498,7 +498,7 @@ class DtcVpnService : VpnService() {
         )
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("DTC Network Simulator")
+            .setContentTitle("DTC Simulator")
             .setContentText("Simulating satellite DTC network latency")
             .setSmallIcon(R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)

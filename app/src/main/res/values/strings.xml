@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">DTC Network Simulator</string>
+    <string name="app_name">DTC Simulator</string>
 
     <!-- VPN Control -->
     <string name="vpn_control_title">VPN Control</string>
